@@ -202,6 +202,12 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Node.js / TypeScript
+node_modules/
+packages/*/dist/
+packages/*/coverage/
+*.tsbuildinfo
+
 # PyPI configuration file
 .pypirc
 
