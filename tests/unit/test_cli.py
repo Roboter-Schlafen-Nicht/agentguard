@@ -436,3 +436,46 @@ class TestHelpOutput:
         assert "check" in stdout
         assert "audit" in stdout
         assert "report" in stdout
+
+
+# --- Error handling ---
+
+
+class TestErrorHandling:
+    def test_malformed_param_raises_error(self) -> None:
+        """Malformed key=value params should error, not silently continue."""
+        exit_code, _, stderr = _run_cli(
+            "check", "--builtins", "shell_command", "bad_param_no_equals"
+        )
+        assert exit_code == 2
+        assert "bad_param_no_equals" in stderr
+
+    def test_policies_no_subcommand_shows_policies_help(self) -> None:
+        """Running 'policies' without a subcommand shows policies help and returns 1."""
+        exit_code, stdout, _ = _run_cli("policies")
+        assert exit_code == 1
+        # Should show policies-specific help, not top-level
+        assert "list" in stdout or "show" in stdout
+
+    def test_audit_no_subcommand_shows_audit_help(self) -> None:
+        """Running 'audit' without a subcommand shows audit help and returns 1."""
+        exit_code, stdout, _ = _run_cli("audit")
+        assert exit_code == 1
+        # Should show audit-specific help, not top-level
+        assert "verify" in stdout or "query" in stdout or "show" in stdout
+
+    def test_policy_dir_with_bad_yaml(self, tmp_path: Path) -> None:
+        """Malformed YAML in --policy-dir should error gracefully."""
+        policy_dir = tmp_path / "policies"
+        policy_dir.mkdir()
+        bad_file = policy_dir / "bad.yaml"
+        bad_file.write_text("not: valid: yaml: ][", encoding="utf-8")
+        exit_code, _, stderr = _run_cli(
+            "check",
+            "--policy-dir",
+            str(policy_dir),
+            "shell_command",
+            "command=ls",
+        )
+        assert exit_code == 1
+        assert "error" in stderr.lower()

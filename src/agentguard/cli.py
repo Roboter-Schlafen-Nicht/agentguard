@@ -25,6 +25,18 @@ if TYPE_CHECKING:
     from agentguard.audit.models import AuditEntry
 
 
+class _Parsers:
+    """Container for parser references needed for subcommand help."""
+
+    def __init__(self) -> None:
+        self.top: argparse.ArgumentParser | None = None
+        self.policies: argparse.ArgumentParser | None = None
+        self.audit: argparse.ArgumentParser | None = None
+
+
+_parsers = _Parsers()
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the top-level argument parser with subcommands."""
     parser = argparse.ArgumentParser(
@@ -92,6 +104,11 @@ def _build_parser() -> argparse.ArgumentParser:
     # --- audit ---
     audit_parser = subparsers.add_parser("audit", help="Audit log operations.")
     audit_sub = audit_parser.add_subparsers(dest="audit_command")
+
+    # Store parser references for subcommand help display
+    _parsers.top = parser
+    _parsers.policies = policies_parser
+    _parsers.audit = audit_parser
 
     # audit verify
     verify_parser = audit_sub.add_parser("verify", help="Verify audit log integrity.")
@@ -202,15 +219,15 @@ def _cmd_policies_show(name: str) -> int:
 
 
 def _parse_params(params: list[str]) -> dict[str, str]:
-    """Parse key=value parameter strings into a dict."""
+    """Parse key=value parameter strings into a dict.
+
+    Raises:
+        ValueError: If any parameter is not in key=value format.
+    """
     result: dict[str, str] = {}
     for param in params:
         if "=" not in param:
-            print(
-                f"Error: Invalid parameter '{param}'. Expected key=value format.",
-                file=sys.stderr,
-            )
-            continue
+            raise ValueError(f"Invalid parameter '{param}'. Expected key=value format.")
         key, _, value = param.partition("=")
         result[key] = value
     return result
@@ -235,7 +252,7 @@ def _cmd_check(args: argparse.Namespace) -> int:
     for policy_path in args.policy:
         try:
             guard.load_policy_file(policy_path)
-        except (FileNotFoundError, ValueError) as e:
+        except Exception as e:
             print(f"Error loading policy '{policy_path}': {e}", file=sys.stderr)
             return 1
 
@@ -248,9 +265,17 @@ def _cmd_check(args: argparse.Namespace) -> int:
             )
             return 1
         for yaml_file in sorted(policy_dir.glob("*.yaml")):
-            guard.load_policy_file(yaml_file)
+            try:
+                guard.load_policy_file(yaml_file)
+            except Exception as e:
+                print(f"Error loading policy '{yaml_file}': {e}", file=sys.stderr)
+                return 1
 
-    params = _parse_params(args.params or [])
+    try:
+        params = _parse_params(args.params or [])
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
     decision = guard.check(args.action_kind, **params)
 
     if args.format == "json":
@@ -422,7 +447,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_policies_list()
         if args.policies_command == "show":
             return _cmd_policies_show(args.name)
-        parser.parse_args(["policies", "--help"])
+        if _parsers.policies is not None:
+            _parsers.policies.print_help()
         return 1
 
     if args.command == "check":
@@ -435,7 +461,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_audit_show(args)
         if args.audit_command == "query":
             return _cmd_audit_query(args)
-        parser.parse_args(["audit", "--help"])
+        if _parsers.audit is not None:
+            _parsers.audit.print_help()
         return 1
 
     if args.command == "report":
