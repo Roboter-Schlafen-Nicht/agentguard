@@ -136,7 +136,7 @@ agentguard/
 - [x] Project scaffolding, CI, packaging
 - [x] Core policy engine (YAML + Python policies)
 - [x] Audit log with hash-chaining
-- [ ] Runtime guardrail interceptor
+- [x] Runtime guardrail interceptor
 - [ ] EU AI Act compliance report generator
 - [ ] LangChain / CrewAI / AutoGen integrations
 - [ ] CLI tool for policy management
