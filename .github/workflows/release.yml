@@ -27,7 +27,7 @@ jobs:
         id: version
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          python -m agentguard.release "$TAG"
+          python src/agentguard/release.py "$TAG"
           VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if echo "$VERSION" | grep -qE '(dev|rc|a|b)[0-9]+$'; then
@@ -35,8 +35,6 @@ jobs:
           else
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
-        env:
-          PYTHONPATH: src
 
   test:
     needs: [validate]
@@ -71,19 +69,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Generate release notes
-        id: notes
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          # Get previous tag for changelog range
-          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${TAG}$" | head -1 || true)
-          if [ -n "$PREV_TAG" ]; then
-            RANGE="${PREV_TAG}..${TAG}"
-          else
-            RANGE="${TAG}"
-          fi
-          echo "range=$RANGE" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         env:

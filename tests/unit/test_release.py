@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from agentguard.release import (
     parse_version_tag,
@@ -49,19 +54,17 @@ class TestParseVersionTag:
 class TestReadPyprojectVersion:
     """Tests for read_pyproject_version."""
 
-    def test_reads_version_from_pyproject(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        pyproject = tmp_path / "pyproject.toml"  # type: ignore[operator]
+    def test_reads_version_from_pyproject(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "test"\nversion = "1.2.3"\n')
         assert read_pyproject_version(str(pyproject)) == "1.2.3"
 
-    def test_missing_file_raises(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
-            read_pyproject_version(str(tmp_path / "nonexistent.toml"))  # type: ignore[operator]
+            read_pyproject_version(str(tmp_path / "nonexistent.toml"))
 
-    def test_missing_version_raises(self, tmp_path: pytest.TempPathFactory) -> None:
-        pyproject = tmp_path / "pyproject.toml"  # type: ignore[operator]
+    def test_missing_version_raises(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "test"\n')
         with pytest.raises(ValueError, match=r"version.*not found"):
             read_pyproject_version(str(pyproject))
@@ -70,24 +73,22 @@ class TestReadPyprojectVersion:
 class TestReadInitVersion:
     """Tests for read_init_version."""
 
-    def test_reads_version_from_init(self, tmp_path: pytest.TempPathFactory) -> None:
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+    def test_reads_version_from_init(self, tmp_path: Path) -> None:
+        init_file = tmp_path / "__init__.py"
         init_file.write_text('__version__ = "2.0.0"\n')
         assert read_init_version(str(init_file)) == "2.0.0"
 
-    def test_reads_single_quoted_version(
-        self, tmp_path: pytest.TempPathFactory
-    ) -> None:
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+    def test_reads_single_quoted_version(self, tmp_path: Path) -> None:
+        init_file = tmp_path / "__init__.py"
         init_file.write_text("__version__ = '1.0.0'\n")
         assert read_init_version(str(init_file)) == "1.0.0"
 
-    def test_missing_file_raises(self, tmp_path: pytest.TempPathFactory) -> None:
+    def test_missing_file_raises(self, tmp_path: Path) -> None:
         with pytest.raises(FileNotFoundError):
-            read_init_version(str(tmp_path / "nonexistent.py"))  # type: ignore[operator]
+            read_init_version(str(tmp_path / "nonexistent.py"))
 
-    def test_missing_version_raises(self, tmp_path: pytest.TempPathFactory) -> None:
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+    def test_missing_version_raises(self, tmp_path: Path) -> None:
+        init_file = tmp_path / "__init__.py"
         init_file.write_text("# no version here\n")
         with pytest.raises(ValueError, match=r"__version__.*not found"):
             read_init_version(str(init_file))
@@ -96,10 +97,10 @@ class TestReadInitVersion:
 class TestValidateVersionConsistency:
     """Tests for validate_version_consistency."""
 
-    def test_all_match_returns_none(self, tmp_path: pytest.TempPathFactory) -> None:
-        pyproject = tmp_path / "pyproject.toml"  # type: ignore[operator]
+    def test_all_match_returns_none(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "test"\nversion = "0.1.0"\n')
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+        init_file = tmp_path / "__init__.py"
         init_file.write_text('__version__ = "0.1.0"\n')
 
         errors = validate_version_consistency(
@@ -109,10 +110,10 @@ class TestValidateVersionConsistency:
         )
         assert errors == []
 
-    def test_tag_mismatch_pyproject(self, tmp_path: pytest.TempPathFactory) -> None:
-        pyproject = tmp_path / "pyproject.toml"  # type: ignore[operator]
+    def test_tag_mismatch_pyproject(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "test"\nversion = "0.2.0"\n')
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+        init_file = tmp_path / "__init__.py"
         init_file.write_text('__version__ = "0.1.0"\n')
 
         errors = validate_version_consistency(
@@ -123,10 +124,10 @@ class TestValidateVersionConsistency:
         assert len(errors) == 1
         assert "pyproject.toml" in errors[0]
 
-    def test_tag_mismatch_init(self, tmp_path: pytest.TempPathFactory) -> None:
-        pyproject = tmp_path / "pyproject.toml"  # type: ignore[operator]
+    def test_tag_mismatch_init(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "test"\nversion = "0.1.0"\n')
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+        init_file = tmp_path / "__init__.py"
         init_file.write_text('__version__ = "0.2.0"\n')
 
         errors = validate_version_consistency(
@@ -137,10 +138,10 @@ class TestValidateVersionConsistency:
         assert len(errors) == 1
         assert "__init__.py" in errors[0]
 
-    def test_all_mismatch(self, tmp_path: pytest.TempPathFactory) -> None:
-        pyproject = tmp_path / "pyproject.toml"  # type: ignore[operator]
+    def test_all_mismatch(self, tmp_path: Path) -> None:
+        pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\nname = "test"\nversion = "0.3.0"\n')
-        init_file = tmp_path / "__init__.py"  # type: ignore[operator]
+        init_file = tmp_path / "__init__.py"
         init_file.write_text('__version__ = "0.4.0"\n')
 
         errors = validate_version_consistency(

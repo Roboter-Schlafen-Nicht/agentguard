@@ -61,11 +61,24 @@ def read_pyproject_version(path: str = "pyproject.toml") -> str:
         FileNotFoundError: If the file does not exist.
         ValueError: If no version field is found.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         content = f.read()
 
-    # Match version = "x.y.z" in [project] section
-    match = re.search(r'^version\s*=\s*"([^"]+)"', content, re.MULTILINE)
+    # Find the [project] section and match version = "x.y.z" or 'x.y.z'
+    project_match = re.search(r"^\[project\]\s*$", content, re.MULTILINE)
+    if project_match:
+        # Search only within [project] section (up to next [section])
+        section_start = project_match.end()
+        next_section = re.search(r"^\[", content[section_start:], re.MULTILINE)
+        section = (
+            content[section_start : section_start + next_section.start()]
+            if next_section
+            else content[section_start:]
+        )
+    else:
+        section = content
+
+    match = re.search(r"^version\s*=\s*[\"']([^\"']+)[\"']", section, re.MULTILINE)
     if not match:
         raise ValueError(f"version field not found in {path}")
 
@@ -85,7 +98,7 @@ def read_init_version(path: str = "src/agentguard/__init__.py") -> str:
         FileNotFoundError: If the file does not exist.
         ValueError: If no __version__ assignment is found.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         content = f.read()
 
     match = re.search(r"^__version__\s*=\s*[\"']([^\"']+)[\"']", content, re.MULTILINE)
