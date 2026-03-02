@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["ai", "agents", "safety", "audit", "guardrails", "compliance", "eu-ai-act"]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
@@ -56,7 +56,7 @@ agentguard = "agentguard.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Roboter-Schlafen-Nicht/agentguard"
-Documentation = "https://github.com/Roboter-Schlafen-Nicht/agentguard/tree/main/docs"
+Documentation = "https://roboter-schlafen-nicht.github.io/agentguard/"
 Repository = "https://github.com/Roboter-Schlafen-Nicht/agentguard"
 Issues = "https://github.com/Roboter-Schlafen-Nicht/agentguard/issues"
 
