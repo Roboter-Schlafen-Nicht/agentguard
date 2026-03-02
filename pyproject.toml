@@ -46,6 +46,10 @@ dev = [
     "types-PyYAML>=6.0",
     "mcp>=1.0",
 ]
+docs = [
+    "mkdocs-material>=9.0",
+    "mkdocstrings[python]>=0.24",
+]
 
 [project.scripts]
 agentguard = "agentguard.cli:main"

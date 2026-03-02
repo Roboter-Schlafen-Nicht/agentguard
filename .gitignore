@@ -1,5 +1,6 @@
 # RSN private files (NEVER commit)
 private/
+output/
 .opencode/
 AGENTS.md
 AGENTS.core.md
