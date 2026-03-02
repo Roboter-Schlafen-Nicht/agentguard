@@ -146,6 +146,7 @@ agentguard/
 - [x] Audit log with hash-chaining
 - [x] Runtime guardrail interceptor
 - [x] EU AI Act compliance report generator
+- [x] OpenClaw integration (`@agentguard/openclaw` TypeScript plugin)
 - [ ] LangChain / CrewAI / AutoGen integrations
 - [ ] CLI tool for policy management
 - [ ] Documentation site
