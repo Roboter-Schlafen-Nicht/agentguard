@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   build:
@@ -63,6 +64,8 @@ jobs:
     environment: testpypi
     permissions:
       id-token: write
+      actions: read
+      contents: read
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -77,10 +80,13 @@ jobs:
 
   publish-pypi:
     needs: [build, test, publish-testpypi]
+    if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
+      actions: read
+      contents: read
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
