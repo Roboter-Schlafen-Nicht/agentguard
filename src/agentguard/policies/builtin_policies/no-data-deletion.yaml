@@ -1,0 +1,17 @@
+name: no-data-deletion
+description: Prevent destructive data operations (file deletion, database drops)
+rules:
+  - action: shell_command
+    description: Block recursive file deletion
+    deny:
+      - pattern: 'rm\s+-[a-zA-Z]*r[a-zA-Z]*f'
+      - pattern: 'rm\s+-[a-zA-Z]*f[a-zA-Z]*r'
+      - pattern: 'rm\s+--force'
+    severity: critical
+  - action: shell_command
+    description: Block destructive database operations
+    deny:
+      - pattern: 'DROP\s+(DATABASE|TABLE|SCHEMA)'
+      - pattern: 'TRUNCATE\s+TABLE'
+      - pattern: 'DELETE\s+FROM\s+\S+\s*$'
+    severity: critical
