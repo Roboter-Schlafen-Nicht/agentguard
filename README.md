@@ -95,7 +95,10 @@ Or configure in your MCP client's settings (e.g. Claude Desktop):
   "mcpServers": {
     "agentguard": {
       "command": "python",
-      "args": ["-m", "agentguard.mcp", "--policies", "policies/"]
+      "args": [
+        "-c",
+        "from agentguard.mcp.server import create_server; create_server(policy_dir='policies/', audit_dir='audit_logs/', load_builtins=True).run()"
+      ]
     }
   }
 }
@@ -134,7 +137,7 @@ entry, the chain breaks:
 from agentguard.audit import AuditLog
 
 log = AuditLog("session-001")
-log.record(action="shell_execute", target="ls -la", result="allowed")
+log.record(action="shell_execute", actor="agent-001", target="ls -la", result="allowed")
 log.save("audit/session-001.jsonl")
 
 # Verify integrity
@@ -149,18 +152,19 @@ logging into a single call:
 ```python
 from agentguard import Guardrail, Guard
 from agentguard.audit import AuditLog
+from agentguard.guardrails import ActionResult
 
 guard = Guard()
 audit = AuditLog("session")
-guardrail = Guardrail(guard=guard, audit_log=audit)
 
-result = guardrail.execute(
-    action="shell_execute",
-    actor="agent",
-    target="echo hello",
-    execute_fn=lambda: "hello",
-)
-# result.allowed, result.output, result.audit_entry
+def my_interceptor(action_kind: str, **params: str) -> ActionResult:
+    """Execute the action and return a result."""
+    return ActionResult(action_kind=action_kind, params=params, executed=True, output="hello")
+
+guardrail = Guardrail(guard=guard, interceptor=my_interceptor, audit_log=audit)
+
+result = guardrail.execute("shell_execute", command="echo hello")
+# result.decision.allowed, result.action_result.output
 ```
 
 ### EU AI Act Compliance Reports
@@ -171,7 +175,7 @@ Generate structured compliance reports from audit logs:
 from agentguard.compliance import EUAIActReportGenerator, render_json
 
 generator = EUAIActReportGenerator()
-report = generator.generate(audit_log)
+report = generator.generate(audit)
 render_json(report, output="compliance-report.json")
 ```
 
@@ -179,8 +183,8 @@ render_json(report, output="compliance-report.json")
 
 The MCP server also exposes `agentguard_status` (show loaded policies)
 and `agentguard_audit_query` (search the audit log by action, result,
-or time range) — so you can ask the agent "what policies are active?"
-or "show me all denied actions in the last hour."
+or actor) — so you can ask the agent "what policies are active?"
+or "show me all denied actions by a given actor."
 
 ## Why MCP?
 
