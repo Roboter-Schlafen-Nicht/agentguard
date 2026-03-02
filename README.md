@@ -1,6 +1,8 @@
 # AgentGuard
 
-**Safety and audit framework for autonomous AI agents.**
+**Safety guardrails for autonomous AI agents. Drop-in MCP server that
+enforces policies and logs every action — the agent never even knows
+it's being guarded.**
 
 [![CI](https://github.com/Roboter-Schlafen-Nicht/agentguard/actions/workflows/ci.yml/badge.svg)](https://github.com/Roboter-Schlafen-Nicht/agentguard/actions/workflows/ci.yml)
 [![License: AGPL v3+](https://img.shields.io/badge/License-AGPL_v3%2B-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
@@ -10,157 +12,235 @@
 
 ## The Problem
 
-AI agents are gaining autonomy. They write code, execute shell
-commands, manage infrastructure, and make decisions. But there's no
-standard way to:
+AI coding agents run shell commands, read your secrets, and write to
+production files. Today there is **nothing between the LLM and your
+system** except trust.
 
-- **Prevent dangerous actions** before they happen
-- **Log what agents actually did** in an auditable, tamper-evident way
-- **Enforce policies** about what agents are allowed to do
-- **Generate compliance reports** for regulatory frameworks like the
-  EU AI Act
+That trust is misplaced:
 
-AgentGuard fills this gap.
+- Prompt injections can make an agent `rm -rf /` or `git push --force`
+- A hallucinating model can overwrite `.env` with garbage
+- There is no audit trail of what the agent actually did
+- Compliance teams have no evidence that AI actions were supervised
 
-## What AgentGuard Does
+## The Solution: Transparent Proxy via MCP
 
-AgentGuard is a Python library that wraps around any AI agent -- whether
-built with LangChain, CrewAI, AutoGen, or custom code -- and provides:
+AgentGuard is an **MCP server** that sits between any AI agent and your
+system. It exposes the same tools the agent expects (`shell_execute`,
+`file_read`, `file_write`) but enforces your policies before every
+action and logs every operation in a tamper-evident audit chain.
 
-### Policy Engine
+**The agent doesn't know it's being guarded.** Zero prompt engineering.
+Zero cooperation required from the LLM. It just works.
 
-Define rules for what agents can and cannot do, in YAML or Python:
+```
+┌──────────────┐     MCP      ┌──────────────┐     actual
+│   AI Agent   │ ──────────── │  AgentGuard  │ ──────────── System
+│ (any client) │   tools      │  MCP Server  │   execution
+└──────────────┘              └──────────────┘
+                               │ policy check │
+                               │ audit log    │
+                               │ deny/allow   │
+```
+
+Works with **any MCP client**: Claude Desktop, Cursor, Windsurf,
+VS Code Copilot, OpenCode, Cline, Zed, and custom agents.
+
+## Quick Start
+
+### 1. Install
+
+```bash
+pip install agentguard[mcp]
+```
+
+### 2. Write a policy
 
 ```yaml
-# policies/no-destructive-git.yaml
-name: no-destructive-git
-description: Prevent agents from running destructive git commands
+# policies/safety.yaml
+name: prevent-disasters
+description: Block destructive operations
 rules:
-  - action: shell_command
+  - action: shell_execute
     deny:
-      - pattern: "git push --force"
+      - pattern: "git push.*--force"
       - pattern: "git reset --hard"
-      - pattern: "git branch -D"
+      - pattern: "rm -rf /"
+    severity: critical
+
+  - action: file_write
+    deny:
+      - pattern: '\.env$'
+      - pattern: 'credentials'
     severity: critical
 ```
 
-### Audit Logging
+### 3. Point your MCP client at AgentGuard
 
-Every agent action is logged in a structured, hash-chained format
-that's tamper-evident:
+```python
+from agentguard.mcp.server import create_server
+
+app = create_server(
+    policy_dir="policies/",
+    audit_dir="audit_logs/",
+    load_builtins=True,      # includes sensible defaults
+)
+app.run()                     # stdio transport
+```
+
+Or configure in your MCP client's settings (e.g. Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "agentguard": {
+      "command": "python",
+      "args": ["-m", "agentguard.mcp", "--policies", "policies/"]
+    }
+  }
+}
+```
+
+That's it. Every `shell_execute`, `file_read`, and `file_write` call
+from your agent now passes through AgentGuard's policy engine. Denied
+actions never execute. Everything is logged.
+
+## What You Get
+
+### Policy Engine — define what agents can and cannot do
+
+YAML policies with regex-based deny patterns. Severity levels from
+`low` to `critical`. Built-in policies for common dangers (force push,
+secret exposure, data deletion). Fully extensible:
+
+```python
+from agentguard import Guard
+
+guard = Guard()
+guard.load_policy_file("policies/safety.yaml")
+
+result = guard.check("shell_execute", command="git push --force origin main")
+assert result.denied
+# "Blocked by policy: prevent-disasters"
+```
+
+### Audit Log — tamper-evident record of every agent action
+
+Every action is recorded in a hash-chained JSONL log. Each entry
+links to the previous via SHA-256. If anyone tampers with a single
+entry, the chain breaks:
 
 ```python
 from agentguard.audit import AuditLog
 
-log = AuditLog("agent-session-001")
-log.record(action="file_write", target="src/main.py", result="success")
-# Each entry is hash-chained to the previous one
+log = AuditLog("session-001")
+log.record(action="shell_execute", target="ls -la", result="allowed")
+log.save("audit/session-001.jsonl")
+
+# Verify integrity
+assert log.verify()  # True — chain is intact
 ```
 
-### Runtime Guardrails
+### Runtime Guardrails — intercept before execution
 
-Intercept agent actions before they execute and validate them against
-policies:
+The `Guardrail` class composes policy checking, execution, and audit
+logging into a single call:
 
 ```python
-from agentguard import GuardedAgent
+from agentguard import Guardrail, Guard
+from agentguard.audit import AuditLog
 
-agent = GuardedAgent(
-    agent=my_langchain_agent,
-    policies=["no-destructive-git", "no-secret-exposure"],
+guard = Guard()
+audit = AuditLog("session")
+guardrail = Guardrail(guard=guard, audit_log=audit)
+
+result = guardrail.execute(
+    action="shell_execute",
+    actor="agent",
+    target="echo hello",
+    execute_fn=lambda: "hello",
 )
-# Actions that violate policies are blocked before execution
+# result.allowed, result.output, result.audit_entry
 ```
 
-### Compliance Reporting
+### EU AI Act Compliance Reports
 
-Generate audit reports aligned with regulatory frameworks:
+Generate structured compliance reports from audit logs:
 
 ```python
-from agentguard.compliance import EUAIActReportGenerator, render_json, render_text
+from agentguard.compliance import EUAIActReportGenerator, render_json
 
 generator = EUAIActReportGenerator()
 report = generator.generate(audit_log)
-
-# Render as JSON or plain text
-print(render_json(report))
-print(render_text(report))
-
-# Or write to file
 render_json(report, output="compliance-report.json")
-render_text(report, output="compliance-report.txt")
 ```
 
-## Installation
+### Sidecar Tools
 
-```bash
-pip install agentguard
-```
+The MCP server also exposes `agentguard_status` (show loaded policies)
+and `agentguard_audit_query` (search the audit log by action, result,
+or time range) — so you can ask the agent "what policies are active?"
+or "show me all denied actions in the last hour."
 
-## Quick Start
+## Why MCP?
 
-```python
-from agentguard import Guard
-from agentguard.policies import DenyPattern
+The [Model Context Protocol](https://modelcontextprotocol.io) is an
+open standard for connecting AI agents to external tools. By
+implementing AgentGuard as an MCP server:
 
-# Create a guard with a simple policy
-guard = Guard()
-guard.add_policy(DenyPattern(
-    name="no-force-push",
-    pattern=r"git push.*--force",
-    severity="critical",
-))
+- **Universal compatibility** — works with any MCP client, present and
+  future
+- **Zero agent modification** — no SDK integration, no wrapper code,
+  no prompt engineering
+- **Transparent enforcement** — the agent sees normal tools; policies
+  are invisible
+- **Decoupled deployment** — security team manages policies, dev team
+  manages agents
 
-# Check an action
-result = guard.check("shell_command", command="git push --force origin main")
-assert result.denied
-assert result.reason == "Blocked by policy: no-force-push"
-```
+This replaces the need for framework-specific plugins (LangChain,
+CrewAI, etc.). One integration covers all agents.
 
 ## Architecture
 
 ```
-agentguard/
-  policies/       -- Policy engine: define rules for agent behavior
-  audit/          -- Audit logging: structured, tamper-evident logs
-  guardrails/     -- Runtime interceptors: validate before execution
-  compliance/     -- Report generators: EU AI Act, SOC2, custom
-  integrations/   -- Framework adapters: LangChain, CrewAI, AutoGen
+src/agentguard/
+  policies/       Policy engine: rules, Guard, YAML loader, builtins
+  audit/          Audit logging: hash-chained entries, JSONL, verify
+  guardrails/     Runtime interceptor: Guardrail, ExecutionResult
+  compliance/     Report generators: EU AI Act, renderers
+  mcp/            MCP server: transparent proxy with policy enforcement
 ```
 
 ### Design Principles
 
-1. **Framework-agnostic** -- Works with any agent framework or custom
-   agents
-2. **Zero-dependency core** -- Core library has no external
-   dependencies; integrations are optional extras
-3. **Pluggable policies** -- YAML or Python policy definitions
-4. **Immutable audit logs** -- Append-only, hash-chained for integrity
-5. **Type-safe** -- Full mypy strict compliance
-6. **Tested** -- TDD, high coverage, CI on every PR
+1. **Transparent** — agents don't know they're guarded
+2. **Zero-trust** — no reliance on LLM cooperation or prompt adherence
+3. **Auditable** — every action is hash-chained and verifiable
+4. **Extensible** — YAML policies, pluggable interceptors
+5. **Type-safe** — full mypy strict compliance
+6. **Tested** — TDD, 95% coverage, CI on Python 3.10–3.13
 
 ## Roadmap
 
-- [x] Project scaffolding, CI, packaging
-- [x] Core policy engine (YAML + Python policies)
-- [x] Audit log with hash-chaining
+- [x] Core policy engine (YAML + Python policies, builtins)
+- [x] Audit log with SHA-256 hash-chaining
 - [x] Runtime guardrail interceptor
 - [x] EU AI Act compliance report generator
-- [x] OpenClaw integration (`@agentguard/openclaw` TypeScript plugin)
-- [ ] LangChain / CrewAI / AutoGen integrations
-- [ ] CLI tool for policy management
+- [x] MCP server with transparent policy enforcement
+- [ ] CLI tool for policy management and server startup
 - [ ] Documentation site
+- [ ] HTTP/SSE transport for remote deployment
+- [ ] Real-time alerting and dashboard
 
-## Why This Exists
+## Who This Is For
 
-As AI agents become more autonomous, the question shifts from "can they
-do this?" to "should they do this?" AgentGuard provides the safety
-infrastructure that bridges this gap.
-
-This project is developed by
-[Roboter Schlafen Nicht](https://github.com/Roboter-Schlafen-Nicht),
-an autonomous engineering consultancy. We build AI agents for
-production use and needed this tool ourselves.
+- **Engineering teams** deploying AI coding agents (Copilot, Cursor,
+  Claude) who need guardrails before the agent touches production
+- **Security teams** who need audit trails and policy enforcement for
+  AI-assisted workflows
+- **Compliance teams** who need evidence that AI actions are supervised
+  and logged per EU AI Act requirements
+- **Anyone** running autonomous agents who wants to sleep at night
 
 ## Contributing
 
@@ -169,3 +249,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 ## License
 
 AGPL-3.0-or-later. See [LICENSE](LICENSE) for details.
+
+---
+
+Built by [Roboter Schlafen Nicht](https://github.com/Roboter-Schlafen-Nicht) —
+autonomous engineering consultancy. We build AI agents for production
+and needed this tool ourselves.
