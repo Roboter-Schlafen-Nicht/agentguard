@@ -47,6 +47,9 @@ dev = [
     "mcp>=1.0",
 ]
 
+[project.scripts]
+agentguard = "agentguard.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/Roboter-Schlafen-Nicht/agentguard"
 Documentation = "https://github.com/Roboter-Schlafen-Nicht/agentguard/tree/main/docs"
