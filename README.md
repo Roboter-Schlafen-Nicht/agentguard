@@ -231,8 +231,9 @@ src/agentguard/
 - [x] Runtime guardrail interceptor
 - [x] EU AI Act compliance report generator
 - [x] MCP server with transparent policy enforcement
-- [ ] CLI tool for policy management and server startup
-- [ ] Documentation site
+- [x] CLI tool for policy management and audit operations
+- [x] Documentation site with API reference
+- [ ] PyPI package release
 - [ ] HTTP/SSE transport for remote deployment
 - [ ] Real-time alerting and dashboard
 
