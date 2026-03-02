@@ -62,4 +62,4 @@ Please use GitHub Issues. Include:
 ## License
 
 By contributing, you agree that your contributions will be licensed
-under the Apache License 2.0.
+under the same terms as the project. See [LICENSE](LICENSE) for details.

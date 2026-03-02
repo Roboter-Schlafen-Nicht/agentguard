@@ -3,7 +3,7 @@
 **Safety and audit framework for autonomous AI agents.**
 
 [![CI](https://github.com/Roboter-Schlafen-Nicht/agentguard/actions/workflows/ci.yml/badge.svg)](https://github.com/Roboter-Schlafen-Nicht/agentguard/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: AGPL v3+](https://img.shields.io/badge/License-AGPL_v3%2B-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 ---
@@ -134,12 +134,11 @@ agentguard/
 ## Roadmap
 
 - [x] Project scaffolding, CI, packaging
-- [ ] Core policy engine (YAML + Python policies)
-- [ ] Audit log with hash-chaining
+- [x] Core policy engine (YAML + Python policies)
+- [x] Audit log with hash-chaining
 - [ ] Runtime guardrail interceptor
-- [ ] LangChain integration
 - [ ] EU AI Act compliance report generator
-- [ ] CrewAI / AutoGen integrations
+- [ ] LangChain / CrewAI / AutoGen integrations
 - [ ] CLI tool for policy management
 - [ ] Documentation site
 
@@ -160,4 +159,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) for details.
+AGPL-3.0-or-later. See [LICENSE](LICENSE) for details.
