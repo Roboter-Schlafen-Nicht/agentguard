@@ -30,18 +30,18 @@ aims to make autonomous AI agents safer and more auditable.
 
 ```
 src/agentguard/
-  policies/       -- Policy engine
-  audit/          -- Audit logging
+  policies/       -- Policy engine (YAML rules, Guard, builtins)
+  audit/          -- Audit logging (hash-chained, JSONL)
   guardrails/     -- Runtime interceptors
-  compliance/     -- Report generators
-  integrations/   -- Framework adapters
+  compliance/     -- Report generators (EU AI Act)
+  mcp/            -- MCP server (transparent proxy for any AI agent)
 ```
 
 ## What Makes a Good Contribution
 
 - Bug fixes with regression tests
 - New policy types with documentation
-- Framework integrations (LangChain, CrewAI, AutoGen, etc.)
+- MCP server improvements (new tools, transports)
 - Compliance report templates
 - Documentation improvements
 
