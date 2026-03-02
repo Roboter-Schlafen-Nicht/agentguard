@@ -59,6 +59,7 @@ Homepage = "https://github.com/Roboter-Schlafen-Nicht/agentguard"
 Documentation = "https://roboter-schlafen-nicht.github.io/agentguard/"
 Repository = "https://github.com/Roboter-Schlafen-Nicht/agentguard"
 Issues = "https://github.com/Roboter-Schlafen-Nicht/agentguard/issues"
+Changelog = "https://github.com/Roboter-Schlafen-Nicht/agentguard/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentguard"]
