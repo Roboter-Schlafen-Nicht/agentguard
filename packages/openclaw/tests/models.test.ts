@@ -140,10 +140,15 @@ describe("matchesRule", () => {
       denyPatterns: [/rm/],
       severity: Severity.HIGH,
     };
-    // Params with non-string values should be skipped
+    // Params with non-string values should be skipped entirely
     const action: Action = {
       kind: "shell_command",
-      params: { count: "42", flag: "true" },
+      params: {
+        count: 42 as unknown,
+        flag: true as unknown,
+        metadata: { command: "rm -rf" } as unknown,
+        note: "safe",
+      },
     };
     expect(matchesRule(rule, action)).toBe(false);
   });

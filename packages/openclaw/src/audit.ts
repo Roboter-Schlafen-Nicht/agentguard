@@ -152,8 +152,8 @@ export class AuditLog {
     return this._sessionId;
   }
 
-  /** Return the entries list. */
-  get entries(): AuditEntry[] {
+  /** Return a read-only view of the entries list. */
+  get entries(): readonly AuditEntry[] {
     return this._entries;
   }
 

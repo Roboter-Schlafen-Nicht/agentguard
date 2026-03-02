@@ -11,6 +11,14 @@ import { Guard } from "./guard.js";
 import { AuditLog } from "./audit.js";
 import type { Decision, Policy } from "./models.js";
 
+declare const __AGENTGUARD_VERSION__: string;
+
+/** Package version, injected at build time from package.json. Falls back to "0.0.0-dev". */
+const PLUGIN_VERSION: string =
+  typeof __AGENTGUARD_VERSION__ !== "undefined"
+    ? __AGENTGUARD_VERSION__
+    : "0.0.0-dev";
+
 /** Event payload for the before_tool_call hook. */
 export interface BeforeToolCallEvent {
   toolName: string;
@@ -135,7 +143,7 @@ export function createAgentGuardPlugin(
 
   return {
     name: "agentguard",
-    version: "0.1.0",
+    version: PLUGIN_VERSION,
     guard,
     auditLog,
     beforeToolCall,
@@ -148,7 +156,17 @@ function summarizeParams(params: Record<string, unknown>): string {
   const entries = Object.entries(params);
   if (entries.length === 0) return "";
   const first = entries[0]!;
-  const value = typeof first[1] === "string" ? first[1] : JSON.stringify(first[1]);
+  let value: string;
+  if (typeof first[1] === "string") {
+    value = first[1];
+  } else {
+    try {
+      const serialized = JSON.stringify(first[1]);
+      value = serialized ?? String(first[1]);
+    } catch {
+      value = String(first[1]);
+    }
+  }
   if (value.length > 200) {
     return value.slice(0, 200) + "...";
   }

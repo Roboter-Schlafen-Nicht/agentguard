@@ -26,6 +26,12 @@ describe("createAgentGuardPlugin", () => {
       expect(plugin.name).toBe("agentguard");
       expect(plugin.version).toBeTruthy();
     });
+
+    it("version is a valid semver-like string", () => {
+      const plugin = createAgentGuardPlugin({});
+      // Should be "0.0.0-dev" in test (define not injected) or a real version
+      expect(plugin.version).toMatch(/^\d+\.\d+\.\d+/);
+    });
   });
 
   describe("beforeToolCall hook", () => {
@@ -236,6 +242,45 @@ describe("createAgentGuardPlugin", () => {
 
       expect(plugin.auditLog.entries).toHaveLength(3);
       expect(plugin.auditLog.verify()).toBe(true);
+    });
+  });
+
+  describe("summarizeParams resilience", () => {
+    it("handles empty params", () => {
+      const plugin = createAgentGuardPlugin({});
+      plugin.beforeToolCall({ toolName: "noop", params: {} });
+      expect(plugin.auditLog.entries[0]!.target).toBe("");
+    });
+
+    it("handles non-string param values (number)", () => {
+      const plugin = createAgentGuardPlugin({});
+      plugin.beforeToolCall({
+        toolName: "api_call",
+        params: { timeout: 5000 },
+      });
+      expect(plugin.auditLog.entries[0]!.target).toBe("5000");
+    });
+
+    it("handles undefined param values gracefully", () => {
+      const plugin = createAgentGuardPlugin({});
+      plugin.beforeToolCall({
+        toolName: "api_call",
+        params: { value: undefined },
+      });
+      // JSON.stringify(undefined) returns undefined, so fallback to String()
+      const target = plugin.auditLog.entries[0]!.target;
+      expect(target).toBe("undefined");
+    });
+
+    it("truncates long param values to 200 chars", () => {
+      const plugin = createAgentGuardPlugin({});
+      const longString = "x".repeat(300);
+      plugin.beforeToolCall({
+        toolName: "shell_command",
+        params: { command: longString },
+      });
+      expect(plugin.auditLog.entries[0]!.target).toHaveLength(203); // 200 + "..."
+      expect(plugin.auditLog.entries[0]!.target).toMatch(/\.\.\.$/);
     });
   });
 });
