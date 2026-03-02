@@ -7,7 +7,7 @@ name = "agentguard"
 version = "0.1.0"
 description = "Safety and audit framework for autonomous AI agents"
 readme = "README.md"
-license = "Apache-2.0"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"
 authors = [
     { name = "Roboter Schlafen Nicht", email = "info@roboterschlafennicht.de" },
@@ -16,7 +16,7 @@ keywords = ["ai", "agents", "safety", "audit", "guardrails", "compliance", "eu-a
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
