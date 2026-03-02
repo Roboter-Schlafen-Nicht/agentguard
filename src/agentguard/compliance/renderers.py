@@ -29,10 +29,10 @@ def render_json(
         The JSON string.
     """
     data = report.to_dict()
-    json_str = json.dumps(data, indent=2, ensure_ascii=False)
+    json_str = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
     if output is not None:
-        Path(output).write_text(json_str + "\n", encoding="utf-8")
+        Path(output).write_text(json_str, encoding="utf-8")
 
     return json_str
 

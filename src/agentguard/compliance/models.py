@@ -200,6 +200,8 @@ class ComplianceReport:
             return SectionStatus.FAIL
         if SectionStatus.WARN in statuses:
             return SectionStatus.WARN
+        if statuses == {SectionStatus.NOT_ASSESSED}:
+            return SectionStatus.NOT_ASSESSED
         return SectionStatus.PASS
 
     def to_dict(self) -> dict[str, Any]:

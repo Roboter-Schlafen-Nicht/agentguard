@@ -231,6 +231,47 @@ class TestArt13Transparency:
         art13 = next(s for s in report.sections if s.article == "Art. 13")
         assert art13.status == SectionStatus.NOT_ASSESSED
 
+    def test_empty_actor_produces_warning(self) -> None:
+        """An empty string actor should be flagged as unidentified."""
+        log = _make_log(
+            [
+                {"action": "a1", "actor": "", "result": "allowed"},
+                {"action": "a2", "actor": "build-agent", "result": "allowed"},
+            ]
+        )
+        generator = EUAIActReportGenerator()
+        report = generator.generate(log)
+        art13 = next(s for s in report.sections if s.article == "Art. 13")
+        assert art13.status == SectionStatus.WARN
+        warnings = [f for f in art13.findings if f.severity == FindingSeverity.WARNING]
+        assert len(warnings) >= 1
+        assert any("unidentified" in w.description.lower() for w in warnings)
+
+    def test_blank_actor_produces_warning(self) -> None:
+        """A whitespace-only actor should be flagged as unidentified."""
+        log = _make_log(
+            [
+                {"action": "a1", "actor": "   ", "result": "allowed"},
+            ]
+        )
+        generator = EUAIActReportGenerator()
+        report = generator.generate(log)
+        art13 = next(s for s in report.sections if s.article == "Art. 13")
+        assert art13.status == SectionStatus.WARN
+
+    def test_all_actors_identified_passes_with_nonempty(self) -> None:
+        """When all actors have real names, status should be PASS."""
+        log = _make_log(
+            [
+                {"action": "a1", "actor": "agent-alpha", "result": "allowed"},
+                {"action": "a2", "actor": "agent-beta", "result": "allowed"},
+            ]
+        )
+        generator = EUAIActReportGenerator()
+        report = generator.generate(log)
+        art13 = next(s for s in report.sections if s.article == "Art. 13")
+        assert art13.status == SectionStatus.PASS
+
 
 class TestArt14HumanOversight:
     """Art. 14: Human oversight assessment."""

@@ -373,6 +373,30 @@ class TestComplianceReport:
         )
         assert report.overall_status() == SectionStatus.NOT_ASSESSED
 
+    def test_overall_status_not_assessed_when_all_not_assessed(self) -> None:
+        """If all sections are NOT_ASSESSED, overall should be NOT_ASSESSED."""
+        sections = [
+            ReportSection(
+                article="Art. 9",
+                title="Risk Management",
+                status=SectionStatus.NOT_ASSESSED,
+                findings=[],
+            ),
+            ReportSection(
+                article="Art. 13",
+                title="Transparency",
+                status=SectionStatus.NOT_ASSESSED,
+                findings=[],
+            ),
+        ]
+        report = ComplianceReport(
+            framework="EU AI Act",
+            generated_at=datetime.now(tz=timezone.utc),
+            session_id="s1",
+            sections=sections,
+        )
+        assert report.overall_status() == SectionStatus.NOT_ASSESSED
+
     def test_to_dict(self) -> None:
         ts = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
         finding = Finding(

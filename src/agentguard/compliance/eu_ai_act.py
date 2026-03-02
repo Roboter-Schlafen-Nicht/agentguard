@@ -234,22 +234,45 @@ class EUAIActReportGenerator:
             )
 
         unique_actors = {e.actor for e in entries}
-        findings.append(
-            Finding(
-                severity=FindingSeverity.INFO,
-                article="Art. 13",
-                description="All actions attributed to identified actors",
-                evidence=(
-                    f"{len(unique_actors)} unique actor(s): "
-                    f"{', '.join(sorted(unique_actors))}"
-                ),
+
+        # Check for unidentified (empty or blank) actors
+        unidentified = {a for a in unique_actors if not a.strip()}
+        identified = unique_actors - unidentified
+
+        if unidentified:
+            unidentified_count = sum(1 for e in entries if not e.actor.strip())
+            findings.append(
+                Finding(
+                    severity=FindingSeverity.WARNING,
+                    article="Art. 13",
+                    description=("Some actions attributed to unidentified actors"),
+                    evidence=(
+                        f"{unidentified_count} action(s) have empty or "
+                        f"blank actor identifiers"
+                    ),
+                )
             )
-        )
+            status = SectionStatus.WARN
+        else:
+            status = SectionStatus.PASS
+
+        if identified:
+            findings.append(
+                Finding(
+                    severity=FindingSeverity.INFO,
+                    article="Art. 13",
+                    description="Actions attributed to identified actors",
+                    evidence=(
+                        f"{len(identified)} unique actor(s): "
+                        f"{', '.join(sorted(identified))}"
+                    ),
+                )
+            )
 
         return ReportSection(
             article="Art. 13",
             title="Transparency",
-            status=SectionStatus.PASS,
+            status=status,
             findings=findings,
         )
 

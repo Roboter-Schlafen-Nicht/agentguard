@@ -148,6 +148,21 @@ class TestRenderJSON:
         parsed = json.loads(content)
         assert parsed["framework"] == "EU AI Act"
 
+    def test_return_value_matches_file_content(self, tmp_path: Path) -> None:
+        """Return value and file content should be consistent."""
+        report = _make_report()
+        output = tmp_path / "report.json"
+        result = render_json(report, output=output)
+        file_content = output.read_text(encoding="utf-8")
+        # Return value and file content must be identical
+        assert result == file_content
+
+    def test_return_value_ends_with_newline(self) -> None:
+        """Like render_text, render_json should include trailing newline."""
+        report = _make_report()
+        result = render_json(report)
+        assert result.endswith("\n")
+
 
 class TestRenderText:
     """Plain text renderer."""
