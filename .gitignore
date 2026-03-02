@@ -1,3 +1,14 @@
+# RSN private files (NEVER commit)
+private/
+.opencode/
+AGENTS.md
+AGENTS.core.md
+AGENTS.worker.md
+opencode.json
+personas/
+scripts/memory.sh
+scripts/memory_cli.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
