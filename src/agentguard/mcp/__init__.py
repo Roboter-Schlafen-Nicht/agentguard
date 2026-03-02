@@ -5,19 +5,12 @@ shell execution, file read, and file write tools. Every tool call passes
 through AgentGuard's policy engine before execution and is recorded in
 a tamper-evident audit log.
 
-Usage::
+Programmatic usage::
 
-    python -m agentguard.mcp --policies policies/
+    from agentguard.mcp.server import create_server
 
-Or in opencode.json::
+    app = create_server(policy_dir="policies/", load_builtins=True)
 
-    {
-        "mcpServers": {
-            "agentguard": {
-                "type": "local",
-                "command": "python",
-                "args": ["-m", "agentguard.mcp", "--policies", "policies/"]
-            }
-        }
-    }
+Refer to the project documentation for details on how to start and
+configure the MCP server with different MCP clients.
 """

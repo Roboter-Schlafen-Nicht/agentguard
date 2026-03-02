@@ -31,8 +31,8 @@ def create_server(
     Args:
         policy_dir: Directory containing YAML policy files.
             If given, must exist.
-        audit_dir: Directory to save audit logs on shutdown.
-            If None, logs are kept in memory only.
+        audit_dir: Directory where audit logs are saved incrementally
+            during the session. If None, logs are kept in memory only.
         actor: Name of the actor recorded in audit entries.
         load_builtins: Whether to load AgentGuard's built-in policies.
 
@@ -169,7 +169,7 @@ def create_server(
         """Read the contents of a file.
 
         Args:
-            path: Absolute path to the file to read.
+            path: Path to the file to read (absolute or relative to cwd).
 
         Returns:
             The file contents as text.
@@ -197,8 +197,49 @@ def create_server(
             _save_audit()
             raise _tool_error(f"File not found: {path}")
 
+        if not file_path.is_file():
+            audit_log.record(
+                action="file_read",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "not a regular file"},
+            )
+            _save_audit()
+            raise _tool_error(f"Not a regular file: {path}")
+
         try:
             content = file_path.read_bytes()
+        except OSError:
+            audit_log.record(
+                action="file_read",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "unreadable"},
+            )
+            _save_audit()
+            raise _tool_error(f"Cannot read file: {path}") from None
+
+        # Heuristic binary detection: check for NUL bytes or high
+        # ratio of control characters before attempting UTF-8 decode
+        sample = content[:1024]
+        if sample:
+            control_bytes = sum(
+                (b < 32 and b not in (9, 10, 13)) or b == 127 for b in sample
+            )
+            if b"\x00" in sample or control_bytes / len(sample) > 0.3:
+                audit_log.record(
+                    action="file_read",
+                    actor=actor,
+                    target=path,
+                    result="error",
+                    metadata={"error": "binary file"},
+                )
+                _save_audit()
+                raise _tool_error(f"Cannot read binary file: {path}") from None
+
+        try:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
             audit_log.record(
@@ -228,7 +269,7 @@ def create_server(
         Creates parent directories if they don't exist.
 
         Args:
-            path: Absolute path to the file to write.
+            path: Path to the file to write (absolute or relative to cwd).
             content: The text content to write.
 
         Returns:
@@ -249,15 +290,17 @@ def create_server(
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8")
 
+        byte_length = len(content.encode("utf-8"))
+
         audit_log.record(
             action="file_write",
             actor=actor,
             target=path,
             result="allowed",
-            metadata={"size": str(len(content))},
+            metadata={"size": str(byte_length)},
         )
         _save_audit()
-        return f"Wrote {len(content)} bytes to {path}"
+        return f"Wrote {byte_length} bytes to {path}"
 
     @app.tool()
     def agentguard_status() -> str:
