@@ -77,10 +77,18 @@ agent = GuardedAgent(
 Generate audit reports aligned with regulatory frameworks:
 
 ```python
-from agentguard.compliance import EUAIActReport
+from agentguard.compliance import EUAIActReportGenerator, render_json, render_text
 
-report = EUAIActReport.from_audit_log(log)
-report.render("html")  # or "pdf", "json"
+generator = EUAIActReportGenerator()
+report = generator.generate(audit_log)
+
+# Render as JSON or plain text
+print(render_json(report))
+print(render_text(report))
+
+# Or write to file
+render_json(report, output="compliance-report.json")
+render_text(report, output="compliance-report.txt")
 ```
 
 ## Installation
@@ -137,7 +145,7 @@ agentguard/
 - [x] Core policy engine (YAML + Python policies)
 - [x] Audit log with hash-chaining
 - [x] Runtime guardrail interceptor
-- [ ] EU AI Act compliance report generator
+- [x] EU AI Act compliance report generator
 - [ ] LangChain / CrewAI / AutoGen integrations
 - [ ] CLI tool for policy management
 - [ ] Documentation site
