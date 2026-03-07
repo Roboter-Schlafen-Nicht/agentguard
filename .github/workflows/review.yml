@@ -1,15 +1,15 @@
-# review.yml -- Reusable workflow: AI code review on PR events.
+# review.yml -- AI code review via RSN Platform API.
 #
-# Install this in any repo that should get AI reviews. The bot account's
-# PAT and the OpenAI key are stored as repository or org secrets.
+# Submits a review task to the RSN Platform's agentic review API.
+# A worker on the platform picks up the task and runs rsn-reviewer
+# to post a review on the PR. Fire-and-forget: the workflow exits
+# after the API accepts the task (HTTP 201).
 #
 # Required secrets:
-#   REVIEWER_GITHUB_TOKEN  -- PAT for the bot GitHub account (repo scope)
-#   OPENAI_API_KEY         -- OpenAI API key
+#   RSN_REVIEW_API_KEY     -- API key for POST /api/review/tasks
 #
-# Optional variables:
-#   OPENAI_MODEL           -- Model to use (default: gpt-4o)
-#   REVIEW_INSTRUCTIONS    -- Extra review instructions appended to prompt
+# The review is performed asynchronously by the platform worker.
+# No Python, OpenAI key, or bot PAT needed in GitHub Actions.
 
 name: AI Code Review
 
@@ -19,7 +19,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 jobs:
   review:
@@ -27,27 +26,31 @@ jobs:
     # Don't review the bot's own PRs (infinite loop prevention)
     if: github.event.pull_request.user.login != 'rsn-reviewer'
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install rsn-reviewer
+      - name: Submit review task
         env:
-          GITHUB_TOKEN: ${{ secrets.REVIEWER_GITHUB_TOKEN }}
-        run: pip install "git+https://${GITHUB_TOKEN}@github.com/Roboter-Schlafen-Nicht/rsn-reviewer.git"
-
-      - name: Run AI review
-        env:
-          GITHUB_TOKEN: ${{ secrets.REVIEWER_GITHUB_TOKEN }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4' }}
-          REVIEW_INSTRUCTIONS: ${{ vars.REVIEW_INSTRUCTIONS || '' }}
+          RSN_REVIEW_API_KEY: ${{ secrets.RSN_REVIEW_API_KEY }}
+          REVIEW_API_URL: https://platform.roboterschlafennicht.de/api/review/tasks
         run: |
-          rsn-reviewer review \
-            --repo "${{ github.repository }}" \
-            --pr "${{ github.event.pull_request.number }}" \
-            --model "$OPENAI_MODEL"
+          # Split github.repository into owner and repo.
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          REPO="${GITHUB_REPOSITORY##*/}"
+
+          HTTP_CODE=$(curl -s -o /tmp/review-response.json -w '%{http_code}' \
+            -X POST "$REVIEW_API_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: $RSN_REVIEW_API_KEY" \
+            -d "{
+              \"owner\": \"$OWNER\",
+              \"repo\": \"$REPO\",
+              \"pr_number\": ${{ github.event.pull_request.number }},
+              \"head_sha\": \"${{ github.event.pull_request.head.sha }}\",
+              \"base_branch\": \"${{ github.event.pull_request.base.ref }}\"
+            }")
+
+          BODY=$(cat /tmp/review-response.json)
+          echo "Response ($HTTP_CODE): $BODY"
+
+          if [ "$HTTP_CODE" != "201" ]; then
+            echo "::error::Review API returned $HTTP_CODE (expected 201)"
+            exit 1
+          fi
