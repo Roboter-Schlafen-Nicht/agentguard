@@ -25,6 +25,7 @@ def create_server(
     audit_dir: str | None = None,
     actor: str = "agent",
     load_builtins: bool = False,
+    auto_discover: bool = False,
 ) -> FastMCP:
     """Create an AgentGuard MCP server.
 
@@ -35,6 +36,9 @@ def create_server(
             during the session. If None, logs are kept in memory only.
         actor: Name of the actor recorded in audit entries.
         load_builtins: Whether to load AgentGuard's built-in policies.
+        auto_discover: Whether to auto-discover policies from standard
+            locations (``.agentguard/policies/``, ``~/.agentguard/policies/``,
+            ``$AGENTGUARD_POLICY_DIR``). Disabled by default.
 
     Returns:
         A FastMCP application with tools registered.
@@ -54,6 +58,12 @@ def create_server(
             raise FileNotFoundError(msg)
         for yaml_file in sorted(policy_path.glob("*.yaml")):
             guard.load_policy_file(yaml_file)
+
+    if auto_discover:
+        from agentguard.policies.discovery import auto_discover as _auto_discover
+
+        for policy in _auto_discover():
+            guard.add_policy(policy)
 
     if load_builtins:
         for policy in load_all_builtins():
