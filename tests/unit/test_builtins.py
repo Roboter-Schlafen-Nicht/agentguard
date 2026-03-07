@@ -404,6 +404,26 @@ class TestBuiltinPolicyBehavior:
         decision = policy.evaluate(action)
         assert decision.allowed
 
+    def test_no_hook_bypass_blocks_no_verify_with_global_options(self) -> None:
+        """git -C repo commit --no-verify should be blocked."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git -C repo commit --no-verify -m 'x'"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_hook_bypass_blocks_no_verify_with_git_dir(self) -> None:
+        """git --git-dir=.git commit --no-verify should be blocked."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git --git-dir=.git commit --no-verify"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
     def test_no_hook_bypass_severity_is_high(self) -> None:
         policy = load_builtin("no-hook-bypass")
         assert policy.rules[0].severity == Severity.HIGH
@@ -529,6 +549,26 @@ class TestBuiltinPolicyBehavior:
         )
         decision = policy.evaluate(action)
         assert decision.allowed
+
+    def test_no_env_commit_blocks_git_add_double_dash_env(self) -> None:
+        """git add -- .env should be blocked."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add -- .env"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_env_commit_blocks_git_add_with_options(self) -> None:
+        """git add -A .env should be blocked."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add -A .env"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
 
     def test_no_env_commit_severity_is_critical(self) -> None:
         policy = load_builtin("no-env-commit")
