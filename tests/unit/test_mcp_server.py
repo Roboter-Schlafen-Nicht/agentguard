@@ -690,3 +690,106 @@ class TestAuditQueryTool:
             assert "0" in text or "no entries" in text.lower() or "[]" in text
 
         await with_server(check)
+
+
+# ===========================================================================
+# Test: Auto-discovery in MCP server
+# ===========================================================================
+
+
+class TestMCPAutoDiscovery:
+    """Test that the MCP server supports auto_discover parameter."""
+
+    @pytest.mark.anyio
+    async def test_auto_discover_loads_project_policies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Server with auto_discover=True should load project-level policies."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        project_dir = tmp_path / ".agentguard" / "policies"
+        project_dir.mkdir(parents=True)
+        (project_dir / "block-rm.yaml").write_text(
+            "name: block-rm\n"
+            "description: Block rm commands\n"
+            "rules:\n"
+            "  - action: shell_execute\n"
+            "    deny:\n"
+            "      - pattern: '\\brm\\b'\n"
+            "    severity: critical\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_status", {})
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "block-rm" in text
+
+        await with_server_auto_discover(check)
+
+    @pytest.mark.anyio
+    async def test_auto_discover_false_skips_project_policies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """auto_discover=False (default) skips project policies."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        project_dir = tmp_path / ".agentguard" / "policies"
+        project_dir.mkdir(parents=True)
+        (project_dir / "block-rm.yaml").write_text(
+            "name: block-rm\n"
+            "description: Block rm commands\n"
+            "rules:\n"
+            "  - action: shell_execute\n"
+            "    deny:\n"
+            "      - pattern: '\\brm\\b'\n"
+            "    severity: critical\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_status", {})
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "block-rm" not in text
+
+        # Default (no auto_discover) — should NOT load project policies
+        await with_server(check)
+
+
+async def with_server_auto_discover(
+    fn: Any,
+    *,
+    audit_dir: Path | None = None,
+    actor: str = "test-agent",
+) -> None:
+    """Like with_server but with auto_discover=True."""
+    from agentguard.mcp.server import create_server
+
+    app = create_server(
+        audit_dir=str(audit_dir) if audit_dir else None,
+        actor=actor,
+        auto_discover=True,
+    )
+
+    server = app._mcp_server  # type: ignore[attr-defined]
+
+    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
+    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
+
+    async with anyio.create_task_group() as tg:
+
+        async def run_server() -> None:
+            await server.run(
+                c2s_recv,
+                s2c_send,
+                server.create_initialization_options(),
+            )
+
+        async def run_client() -> None:
+            async with ClientSession(s2c_recv, c2s_send) as session:
+                await session.initialize()
+                await fn(session)
+                tg.cancel_scope.cancel()
+
+        tg.start_soon(run_server)
+        tg.start_soon(run_client)

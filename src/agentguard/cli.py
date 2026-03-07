@@ -236,6 +236,7 @@ def _parse_params(params: list[str]) -> dict[str, str]:
 def _cmd_check(args: argparse.Namespace) -> int:
     """Check an action against policies."""
     from agentguard.policies.builtins import load_all_builtins
+    from agentguard.policies.discovery import auto_discover
     from agentguard.policies.guard import Guard
 
     if args.action_kind is None:
@@ -243,6 +244,9 @@ def _cmd_check(args: argparse.Namespace) -> int:
         return 2
 
     guard = Guard()
+
+    # Determine if user explicitly provided policy sources
+    has_explicit_policies = bool(args.policy) or bool(args.policy_dir)
 
     # Load policies
     if args.builtins:
@@ -270,6 +274,11 @@ def _cmd_check(args: argparse.Namespace) -> int:
             except Exception as e:
                 print(f"Error loading policy '{yaml_file}': {e}", file=sys.stderr)
                 return 1
+
+    # Auto-discover policies when no explicit --policy or --policy-dir given
+    if not has_explicit_policies:
+        for policy in auto_discover():
+            guard.add_policy(policy)
 
     try:
         params = _parse_params(args.params or [])

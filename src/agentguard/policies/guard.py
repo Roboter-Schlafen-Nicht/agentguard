@@ -39,6 +39,37 @@ class Guard:
         """
         self._policies: list[Policy] = list(policies) if policies else []
 
+    @classmethod
+    def with_auto_discovery(cls, *, include_builtins: bool = False) -> Guard:
+        """Create a Guard with auto-discovered policies.
+
+        Loads policies from standard locations:
+        1. ``$AGENTGUARD_POLICY_DIR`` (colon-separated directories)
+        2. ``.agentguard/policies/`` (project-level, relative to CWD)
+        3. ``~/.agentguard/policies/`` (user-level)
+
+        Args:
+            include_builtins: Also load AgentGuard's built-in policies
+                (appended after discovered policies).
+
+        Returns:
+            A new Guard instance with discovered (and optionally
+            built-in) policies loaded.
+        """
+        from agentguard.policies.builtins import load_all_builtins
+        from agentguard.policies.discovery import auto_discover
+
+        policies = auto_discover()
+
+        if include_builtins:
+            seen_names = {p.name for p in policies}
+            for builtin in load_all_builtins():
+                if builtin.name not in seen_names:
+                    seen_names.add(builtin.name)
+                    policies.append(builtin)
+
+        return cls(policies=policies)
+
     @property
     def policies(self) -> list[Policy]:
         """Return the list of loaded policies."""

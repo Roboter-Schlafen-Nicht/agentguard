@@ -12,6 +12,8 @@ from agentguard.cli import main
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 
 def _run_cli(*args: str) -> tuple[int, str, str]:
     """Run the CLI with the given arguments and capture output.
@@ -479,3 +481,114 @@ class TestErrorHandling:
         )
         assert exit_code == 1
         assert "error" in stderr.lower()
+
+
+# --- Auto-discovery ---
+
+
+class TestAutoDiscovery:
+    """CLI auto-discovers policies from .agentguard/policies/ when no
+    --policy or --policy-dir flags are given."""
+
+    def test_auto_discovers_project_policies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When CWD has .agentguard/policies/, check loads them automatically."""
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        policy_dir = tmp_path / ".agentguard" / "policies"
+        policy_dir.mkdir(parents=True)
+        _create_policy_file(policy_dir / "test.yaml")
+
+        # rm -rf should be denied by the auto-discovered policy
+        exit_code, stdout, _ = _run_cli("check", "shell_command", "command=rm -rf /")
+        assert exit_code == 1
+        assert "denied" in stdout.lower()
+
+    def test_auto_discover_allows_safe_commands(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Auto-discovered policies should still allow non-matching commands."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        policy_dir = tmp_path / ".agentguard" / "policies"
+        policy_dir.mkdir(parents=True)
+        _create_policy_file(policy_dir / "test.yaml")
+
+        exit_code, stdout, _ = _run_cli("check", "shell_command", "command=ls -la")
+        assert exit_code == 0
+        assert "allowed" in stdout.lower()
+
+    def test_explicit_policy_overrides_auto_discovery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When --policy or --policy-dir is given, auto-discovery is skipped."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        # Project-level policy that blocks rm
+        project_dir = tmp_path / ".agentguard" / "policies"
+        project_dir.mkdir(parents=True)
+        _create_policy_file(project_dir / "block-rm.yaml")
+
+        # Explicit empty policy dir (no policies)
+        explicit_dir = tmp_path / "explicit-policies"
+        explicit_dir.mkdir()
+
+        # With --policy-dir pointing to empty dir, auto-discovery is skipped
+        exit_code, stdout, _ = _run_cli(
+            "check",
+            "--policy-dir",
+            str(explicit_dir),
+            "shell_command",
+            "command=rm -rf /",
+        )
+        assert exit_code == 0
+        assert "allowed" in stdout.lower()
+
+    def test_builtins_flag_still_works_with_auto_discovery(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--builtins flag should NOT suppress auto-discovery."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        policy_dir = tmp_path / ".agentguard" / "policies"
+        policy_dir.mkdir(parents=True)
+        _create_policy_file(policy_dir / "test.yaml")
+
+        # Should have both builtins and auto-discovered
+        exit_code, stdout, _ = _run_cli(
+            "check", "--builtins", "shell_command", "command=rm -rf /"
+        )
+        assert exit_code == 1
+        assert "denied" in stdout.lower()
+
+    def test_env_var_policies_loaded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AGENTGUARD_POLICY_DIR env var policies are auto-discovered."""
+        monkeypatch.chdir(tmp_path)
+
+        env_dir = tmp_path / "env-policies"
+        env_dir.mkdir()
+        _create_policy_file(env_dir / "test.yaml")
+        monkeypatch.setenv("AGENTGUARD_POLICY_DIR", str(env_dir))
+
+        exit_code, stdout, _ = _run_cli("check", "shell_command", "command=rm -rf /")
+        assert exit_code == 1
+        assert "denied" in stdout.lower()
+
+    def test_no_auto_discovery_when_no_dirs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When no policy dirs exist, check allows everything (no crash)."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        exit_code, stdout, _ = _run_cli("check", "shell_command", "command=rm -rf /")
+        assert exit_code == 0
+        assert "allowed" in stdout.lower()

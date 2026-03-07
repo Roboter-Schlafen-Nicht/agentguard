@@ -10,6 +10,8 @@ from agentguard.policies.guard import Guard
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 from agentguard.policies.models import (
     Decision,
     Policy,
@@ -198,3 +200,89 @@ class TestGuardLoadYaml:
         guard.load_policy_file(policy_file)
         guard.add_policy(_make_policy("code-policy", pattern="eval"))
         assert len(guard.policies) == 3
+
+
+class TestGuardAutoDiscover:
+    """Tests for Guard.with_auto_discovery() class method."""
+
+    def test_with_auto_discovery_loads_project_policies(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        project_dir = tmp_path / ".agentguard" / "policies"
+        project_dir.mkdir(parents=True)
+        (project_dir / "no-rm.yaml").write_text(
+            textwrap.dedent("""\
+                name: no-rm
+                rules:
+                  - action: shell_command
+                    deny:
+                      - pattern: "\\\\brm\\\\b"
+                    severity: critical
+            """),
+            encoding="utf-8",
+        )
+
+        guard = Guard.with_auto_discovery()
+        assert len(guard.policies) == 1
+        assert guard.policies[0].name == "no-rm"
+
+    def test_with_auto_discovery_returns_guard_instance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        guard = Guard.with_auto_discovery()
+        assert isinstance(guard, Guard)
+
+    def test_with_auto_discovery_no_policies_returns_empty_guard(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        guard = Guard.with_auto_discovery()
+        assert len(guard.policies) == 0
+
+    def test_with_auto_discovery_include_builtins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        guard = Guard.with_auto_discovery(include_builtins=True)
+        # Should have at least the 5 built-in policies
+        assert len(guard.policies) >= 5
+        names = [p.name for p in guard.policies]
+        assert "no-force-push" in names
+
+    def test_with_auto_discovery_combines_discovered_and_builtins(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("AGENTGUARD_POLICY_DIR", raising=False)
+
+        project_dir = tmp_path / ".agentguard" / "policies"
+        project_dir.mkdir(parents=True)
+        (project_dir / "custom.yaml").write_text(
+            textwrap.dedent("""\
+                name: custom-policy
+                rules:
+                  - action: shell_command
+                    deny:
+                      - pattern: "custom-bad"
+                    severity: low
+            """),
+            encoding="utf-8",
+        )
+
+        guard = Guard.with_auto_discovery(include_builtins=True)
+        names = [p.name for p in guard.policies]
+        # Discovered policies come first, then builtins
+        assert "custom-policy" in names
+        assert "no-force-push" in names
+        # Custom should be before builtins
+        assert names.index("custom-policy") < names.index("no-force-push")
