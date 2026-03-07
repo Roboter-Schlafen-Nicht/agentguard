@@ -4,6 +4,6 @@ rules:
   - action: shell_command
     description: Block git commands that skip pre-commit or pre-push hooks
     deny:
-      - pattern: 'git\s+\S+.*--no-verify'
+      - pattern: '\bgit\b.*--no-verify'
       - pattern: 'git\s+commit\b.*\s-[a-zA-Z]*n[a-zA-Z]*(?:\s|$)'
     severity: high
