@@ -1,0 +1,25 @@
+name: no-env-commit
+description: Prevent staging secret or credential files in git
+rules:
+  - action: shell_command
+    description: Block git add of .env files (except .env.example)
+    deny:
+      - pattern: 'git\s+add\s+.*\.env(?!\.example)(?:\b|$)'
+    severity: critical
+  - action: shell_command
+    description: Block git add of private keys and certificates
+    deny:
+      - pattern: 'git\s+add\s+.*\.pem\b'
+      - pattern: 'git\s+add\s+.*\.key\b'
+      - pattern: 'git\s+add\s+.*id_rsa\b'
+      - pattern: 'git\s+add\s+.*\.keystore\b'
+      - pattern: 'git\s+add\s+.*\.p12\b'
+      - pattern: 'git\s+add\s+.*\.pfx\b'
+      - pattern: 'git\s+add\s+.*\.jks\b'
+    severity: critical
+  - action: shell_command
+    description: Block git add of credential files
+    deny:
+      - pattern: 'git\s+add\s+.*credentials\b'
+      - pattern: 'git\s+add\s+.*secrets\b'
+    severity: critical

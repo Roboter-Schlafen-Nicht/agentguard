@@ -1,0 +1,9 @@
+name: no-hook-bypass
+description: Prevent bypassing git hooks with --no-verify or -n flags
+rules:
+  - action: shell_command
+    description: Block git commands that skip pre-commit or pre-push hooks
+    deny:
+      - pattern: '\bgit\b.*--no-verify'
+      - pattern: '\bgit\b.*\bcommit\b.*\s-[a-zA-Z]*n[a-zA-Z]*(?:\s|$)'
+    severity: high
