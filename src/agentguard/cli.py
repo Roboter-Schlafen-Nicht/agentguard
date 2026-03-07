@@ -5,6 +5,7 @@ Provides command-line access to AgentGuard's core capabilities:
 - audit: Inspect and verify audit logs
 - report: Generate compliance reports
 - policies: List and inspect available policies
+- serve: Start the MCP server with policy enforcement
 - version: Print the AgentGuard version
 
 Uses only stdlib argparse (no external dependencies).
@@ -23,6 +24,11 @@ if TYPE_CHECKING:
 
     from agentguard.audit.log import AuditLog
     from agentguard.audit.models import AuditEntry
+
+try:
+    from agentguard.mcp.server import create_server
+except ImportError:
+    create_server = None  # type: ignore[assignment]
 
 
 class _Parsers:
@@ -146,6 +152,34 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["text", "json"],
         default="text",
         help="Output format (default: text).",
+    )
+
+    # --- serve ---
+    serve_parser = subparsers.add_parser(
+        "serve", help="Start the AgentGuard MCP server."
+    )
+    serve_parser.add_argument(
+        "--builtins",
+        action="store_true",
+        help="Load all built-in policies.",
+    )
+    serve_parser.add_argument(
+        "--auto-discover",
+        action="store_true",
+        help="Auto-discover policies from standard locations.",
+    )
+    serve_parser.add_argument(
+        "--policy-dir",
+        help="Directory containing policy YAML files.",
+    )
+    serve_parser.add_argument(
+        "--audit-dir",
+        help="Directory where audit logs are saved.",
+    )
+    serve_parser.add_argument(
+        "--actor",
+        default="agent",
+        help="Actor name for audit entries (default: agent).",
     )
 
     # --- report ---
@@ -394,6 +428,43 @@ def _cmd_audit_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Start the AgentGuard MCP server."""
+    if create_server is None:
+        print(
+            "Error: MCP dependencies not installed. "
+            "Install with: pip install agentguard[mcp]",
+            file=sys.stderr,
+        )
+        return 1
+
+    policy_dir = getattr(args, "policy_dir", None)
+    if policy_dir is not None and not Path(policy_dir).is_dir():
+        print(
+            f"Error: Policy directory not found: {policy_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        app = create_server(
+            policy_dir=policy_dir,
+            audit_dir=getattr(args, "audit_dir", None),
+            actor=args.actor,
+            load_builtins=args.builtins,
+            auto_discover=args.auto_discover,
+        )
+        app.run()
+    except ImportError:
+        print(
+            "Error: MCP dependencies not installed. "
+            "Install with: pip install agentguard[mcp]",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
 def _cmd_report(args: argparse.Namespace) -> int:
     """Generate a compliance report."""
     framework = args.framework.lower()
@@ -462,6 +533,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "check":
         return _cmd_check(args)
+
+    if args.command == "serve":
+        return _cmd_serve(args)
 
     if args.command == "audit":
         if args.audit_command == "verify":

@@ -592,3 +592,156 @@ class TestAutoDiscovery:
         exit_code, stdout, _ = _run_cli("check", "shell_command", "command=rm -rf /")
         assert exit_code == 0
         assert "allowed" in stdout.lower()
+
+
+# --- Serve command ---
+
+
+class TestServeCommand:
+    """Tests for the ``agentguard serve`` CLI subcommand."""
+
+    def test_serve_appears_in_help(self) -> None:
+        """The serve subcommand should appear in --help output."""
+        exit_code, stdout, _ = _run_cli("--help")
+        assert exit_code == 0
+        assert "serve" in stdout
+
+    def test_serve_help_shows_options(self) -> None:
+        """Running ``agentguard serve --help`` shows all options."""
+        exit_code, stdout, _ = _run_cli("serve", "--help")
+        assert exit_code == 0
+        assert "--builtins" in stdout
+        assert "--auto-discover" in stdout
+        assert "--policy-dir" in stdout
+        assert "--audit-dir" in stdout
+        assert "--actor" in stdout
+
+    def test_serve_calls_create_server_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no flags, serve calls create_server with defaults and runs it."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli("serve")
+        assert exit_code == 0
+        mock_create.assert_called_once_with(
+            policy_dir=None,
+            audit_dir=None,
+            actor="agent",
+            load_builtins=False,
+            auto_discover=False,
+        )
+        mock_app.run.assert_called_once()
+
+    def test_serve_passes_all_flags(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """All CLI flags are forwarded to create_server."""
+        from unittest.mock import MagicMock
+
+        policy_dir = tmp_path / "policies"
+        policy_dir.mkdir()
+        audit_dir = tmp_path / "audit"
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli(
+            "serve",
+            "--builtins",
+            "--auto-discover",
+            "--policy-dir",
+            str(policy_dir),
+            "--audit-dir",
+            str(audit_dir),
+            "--actor",
+            "my-agent",
+        )
+        assert exit_code == 0
+        mock_create.assert_called_once_with(
+            policy_dir=str(policy_dir),
+            audit_dir=str(audit_dir),
+            actor="my-agent",
+            load_builtins=True,
+            auto_discover=True,
+        )
+        mock_app.run.assert_called_once()
+
+    def test_serve_builtins_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--builtins flag enables built-in policies."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli("serve", "--builtins")
+        assert exit_code == 0
+        mock_create.assert_called_once_with(
+            policy_dir=None,
+            audit_dir=None,
+            actor="agent",
+            load_builtins=True,
+            auto_discover=False,
+        )
+
+    def test_serve_auto_discover_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--auto-discover flag enables policy auto-discovery."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli("serve", "--auto-discover")
+        assert exit_code == 0
+        mock_create.assert_called_once_with(
+            policy_dir=None,
+            audit_dir=None,
+            actor="agent",
+            load_builtins=False,
+            auto_discover=True,
+        )
+
+    def test_serve_nonexistent_policy_dir(self) -> None:
+        """--policy-dir pointing to a non-existent directory should error."""
+        from unittest.mock import MagicMock, patch
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        with patch("agentguard.cli.create_server", mock_create):
+            exit_code, _, stderr = _run_cli("serve", "--policy-dir", "/nonexistent/dir")
+        assert exit_code == 1
+        assert "not found" in stderr.lower() or "not exist" in stderr.lower()
+        mock_app.run.assert_not_called()
+
+    def test_serve_mcp_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When mcp is not installed, serve should print a helpful error."""
+
+        # Simulate import error by patching the import in the handler
+        def _raise_import_error(*args: object, **kwargs: object) -> None:
+            raise ImportError("No module named 'mcp'")
+
+        monkeypatch.setattr("agentguard.cli.create_server", _raise_import_error)
+
+        exit_code, _, stderr = _run_cli("serve")
+        assert exit_code == 1
+        assert "mcp" in stderr.lower()
+
+    def test_serve_custom_actor(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--actor flag customizes the actor name."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli("serve", "--actor", "custom-bot")
+        assert exit_code == 0
+        call_kwargs = mock_create.call_args[1]
+        assert call_kwargs["actor"] == "custom-bot"
