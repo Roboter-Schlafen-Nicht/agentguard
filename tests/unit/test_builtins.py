@@ -424,6 +424,36 @@ class TestBuiltinPolicyBehavior:
         decision = policy.evaluate(action)
         assert decision.denied
 
+    def test_no_hook_bypass_blocks_n_with_global_C_option(self) -> None:
+        """git -C repo commit -n should be blocked."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git -C repo commit -n -m 'skip hooks'"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_hook_bypass_blocks_n_with_git_dir_option(self) -> None:
+        """git --git-dir=.git commit -n should be blocked."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git --git-dir=.git commit -n"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_hook_bypass_blocks_nm_with_global_C_option(self) -> None:
+        """git -C repo commit -nm 'msg' should be blocked."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git -C repo commit -nm 'skip hooks'"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
     def test_no_hook_bypass_severity_is_high(self) -> None:
         policy = load_builtin("no-hook-bypass")
         assert policy.rules[0].severity == Severity.HIGH
@@ -569,6 +599,26 @@ class TestBuiltinPolicyBehavior:
         )
         decision = policy.evaluate(action)
         assert decision.denied
+
+    def test_no_env_commit_allows_git_add_double_dash_env_example(self) -> None:
+        """git add -- .env.example should be allowed."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add -- .env.example"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.allowed
+
+    def test_no_env_commit_allows_git_add_option_env_example(self) -> None:
+        """git add -A .env.example should be allowed."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add -A .env.example"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.allowed
 
     def test_no_env_commit_severity_is_critical(self) -> None:
         policy = load_builtin("no-env-commit")
