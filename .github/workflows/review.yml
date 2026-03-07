@@ -23,29 +23,35 @@ permissions:
 jobs:
   review:
     runs-on: ubuntu-latest
-    # Don't review the bot's own PRs (infinite loop prevention)
-    if: github.event.pull_request.user.login != 'rsn-reviewer'
+    # Don't review the bot's own PRs or fork PRs (secret protection)
+    if: >-
+      github.event.pull_request.user.login != 'rsn-reviewer' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - name: Submit review task
         env:
           RSN_REVIEW_API_KEY: ${{ secrets.RSN_REVIEW_API_KEY }}
           REVIEW_API_URL: https://platform.roboterschlafennicht.de/api/review/tasks
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
         run: |
-          # Split github.repository into owner and repo.
           OWNER="${GITHUB_REPOSITORY%%/*}"
           REPO="${GITHUB_REPOSITORY##*/}"
+
+          PAYLOAD=$(jq -n \
+            --arg owner "$OWNER" \
+            --arg repo "$REPO" \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg head_sha "$HEAD_SHA" \
+            --arg base_branch "$BASE_BRANCH" \
+            '{owner: $owner, repo: $repo, pr_number: $pr_number, head_sha: $head_sha, base_branch: $base_branch}')
 
           HTTP_CODE=$(curl -s -o /tmp/review-response.json -w '%{http_code}' \
             -X POST "$REVIEW_API_URL" \
             -H "Content-Type: application/json" \
             -H "X-API-Key: $RSN_REVIEW_API_KEY" \
-            -d "{
-              \"owner\": \"$OWNER\",
-              \"repo\": \"$REPO\",
-              \"pr_number\": ${{ github.event.pull_request.number }},
-              \"head_sha\": \"${{ github.event.pull_request.head.sha }}\",
-              \"base_branch\": \"${{ github.event.pull_request.base.ref }}\"
-            }")
+            -d "$PAYLOAD")
 
           BODY=$(cat /tmp/review-response.json)
           echo "Response ($HTTP_CODE): $BODY"
