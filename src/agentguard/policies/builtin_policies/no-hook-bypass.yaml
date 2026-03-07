@@ -5,5 +5,5 @@ rules:
     description: Block git commands that skip pre-commit or pre-push hooks
     deny:
       - pattern: 'git\s+\S+.*--no-verify'
-      - pattern: 'git\s+commit\b.*\s-n(?:\s|$)'
+      - pattern: 'git\s+commit\b.*\s-[a-zA-Z]*n[a-zA-Z]*(?:\s|$)'
     severity: high

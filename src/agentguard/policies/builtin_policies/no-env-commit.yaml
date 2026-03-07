@@ -4,7 +4,7 @@ rules:
   - action: shell_command
     description: Block git add of .env files (except .env.example)
     deny:
-      - pattern: 'git\s+add\s+.*\.env(?!\.example)\b'
+      - pattern: 'git\s+add\s+.*\.env(?!\.example)(?:\b|$)'
     severity: critical
   - action: shell_command
     description: Block git add of private keys and certificates

@@ -364,6 +364,46 @@ class TestBuiltinPolicyBehavior:
         decision = policy.evaluate(action)
         assert decision.allowed
 
+    def test_no_hook_bypass_blocks_commit_nm_combined_flags(self) -> None:
+        """git commit -nm 'msg' combines -n and -m into one flag group."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git commit -nm 'skip hooks'"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_hook_bypass_blocks_commit_amend_n(self) -> None:
+        """git commit --amend -n at end of command (no trailing space)."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git commit --amend -n"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_hook_bypass_blocks_n_at_end_of_command(self) -> None:
+        """git commit -n at end of string with no trailing space."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git commit -n"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_hook_bypass_does_not_false_positive_on_n_in_message(self) -> None:
+        """Ensure -n inside a commit message doesn't trigger false positive."""
+        policy = load_builtin("no-hook-bypass")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git commit -m 'not-n-flag'"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.allowed
+
     def test_no_hook_bypass_severity_is_high(self) -> None:
         policy = load_builtin("no-hook-bypass")
         assert policy.rules[0].severity == Severity.HIGH
@@ -456,6 +496,36 @@ class TestBuiltinPolicyBehavior:
         action = Action(
             kind="shell_command",
             params={"command": "cat .env"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.allowed
+
+    def test_no_env_commit_blocks_path_prefixed_env(self) -> None:
+        """git add path/to/.env should be blocked."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add config/.env"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_env_commit_blocks_env_at_end_of_string(self) -> None:
+        """git add .env at end-of-string (no trailing chars)."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add .env"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_env_commit_allows_env_example_with_path(self) -> None:
+        """git add config/.env.example should be allowed."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add config/.env.example"},
         )
         decision = policy.evaluate(action)
         assert decision.allowed
