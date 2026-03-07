@@ -20,6 +20,6 @@ rules:
   - action: shell_command
     description: Block git add of credential files
     deny:
-      - pattern: 'git\s+add\s+.*credentials\.\w+'
-      - pattern: 'git\s+add\s+.*secrets\.\w+'
+      - pattern: 'git\s+add\s+.*credentials\b'
+      - pattern: 'git\s+add\s+.*secrets\b'
     severity: critical

@@ -600,6 +600,36 @@ class TestBuiltinPolicyBehavior:
         decision = policy.evaluate(action)
         assert decision.denied
 
+    def test_no_env_commit_blocks_git_add_env_dev(self) -> None:
+        """git add .env.dev should be blocked (not .env.example)."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add .env.dev"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_env_commit_blocks_git_add_aws_credentials(self) -> None:
+        """git add .aws/credentials (no extension) should be blocked."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add .aws/credentials"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_no_env_commit_blocks_git_add_secrets_no_ext(self) -> None:
+        """git add secrets (no extension) should be blocked."""
+        policy = load_builtin("no-env-commit")
+        action = Action(
+            kind="shell_command",
+            params={"command": "git add config/secrets"},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
     def test_no_env_commit_allows_git_add_double_dash_env_example(self) -> None:
         """git add -- .env.example should be allowed."""
         policy = load_builtin("no-env-commit")
