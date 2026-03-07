@@ -1,0 +1,53 @@
+# review.yml -- Reusable workflow: AI code review on PR events.
+#
+# Install this in any repo that should get AI reviews. The bot account's
+# PAT and the OpenAI key are stored as repository or org secrets.
+#
+# Required secrets:
+#   REVIEWER_GITHUB_TOKEN  -- PAT for the bot GitHub account (repo scope)
+#   OPENAI_API_KEY         -- OpenAI API key
+#
+# Optional variables:
+#   OPENAI_MODEL           -- Model to use (default: gpt-4o)
+#   REVIEW_INSTRUCTIONS    -- Extra review instructions appended to prompt
+
+name: AI Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    # Don't review the bot's own PRs (infinite loop prevention)
+    if: github.event.pull_request.user.login != 'rsn-reviewer'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install rsn-reviewer
+        env:
+          GITHUB_TOKEN: ${{ secrets.REVIEWER_GITHUB_TOKEN }}
+        run: pip install "git+https://${GITHUB_TOKEN}@github.com/Roboter-Schlafen-Nicht/rsn-reviewer.git"
+
+      - name: Run AI review
+        env:
+          GITHUB_TOKEN: ${{ secrets.REVIEWER_GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4' }}
+          REVIEW_INSTRUCTIONS: ${{ vars.REVIEW_INSTRUCTIONS || '' }}
+        run: |
+          rsn-reviewer review \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --model "$OPENAI_MODEL"
