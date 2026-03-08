@@ -492,3 +492,181 @@ class TestAuditLogQuery:
         assert isinstance(results, list)
         for entry in results:
             assert isinstance(entry, AuditEntry)
+
+
+class TestAuditLogAppend:
+    """Append-only audit persistence.
+
+    The append() method writes only NEW entries to disk using file
+    append mode ('a'), ensuring:
+    1. Previously persisted entries are never rewritten
+    2. Each call only adds the delta since the last persist
+    3. The resulting file is a valid, verifiable JSONL audit log
+    """
+
+    def test_append_creates_file(self, tmp_path: Path) -> None:
+        """append() creates the file if it doesn't exist."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+        log.record(action="test", actor="a", target="t", result="ok")
+        log.append(log_file)
+        assert log_file.exists()
+
+    def test_append_writes_new_entries_only(self, tmp_path: Path) -> None:
+        """append() writes only entries added since last persist."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+        log.record(action="a1", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        # File should have exactly 1 line
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 1
+
+        # Add a second entry and append again
+        log.record(action="a2", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        # File should now have exactly 2 lines (not rewritten)
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 2
+
+    def test_append_does_not_rewrite_existing(self, tmp_path: Path) -> None:
+        """append() must not overwrite previously written content."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+        log.record(action="a1", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        # Read the first line's content
+        first_line = log_file.read_text().strip().split("\n")[0]
+
+        # Append more entries
+        log.record(action="a2", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        # The first line should be identical (not rewritten)
+        new_first_line = log_file.read_text().strip().split("\n")[0]
+        assert first_line == new_first_line
+
+    def test_append_no_new_entries_is_noop(self, tmp_path: Path) -> None:
+        """append() with no new entries does not modify the file."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+        log.record(action="a1", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        content_before = log_file.read_text()
+
+        # Append again with no new entries
+        log.append(log_file)
+
+        content_after = log_file.read_text()
+        assert content_before == content_after
+
+    def test_append_multiple_new_entries(self, tmp_path: Path) -> None:
+        """append() writes all new entries added since last persist."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+        log.record(action="a1", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        # Add 3 more entries before appending
+        log.record(action="a2", actor="a", target="t", result="ok")
+        log.record(action="a3", actor="a", target="t", result="ok")
+        log.record(action="a4", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 4
+
+    def test_append_result_verifies(self, tmp_path: Path) -> None:
+        """File written via append() passes integrity verification."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+
+        # Append in multiple rounds
+        log.record(action="a1", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        log.record(action="a2", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        log.record(action="a3", actor="a", target="t", result="ok")
+        log.append(log_file)
+
+        # Load and verify the chain
+        loaded = AuditLog.load(log_file, session_id="test-session")
+        assert len(loaded.entries) == 3
+        assert loaded.verify() is True
+
+    def test_append_uses_file_append_mode(self, tmp_path: Path) -> None:
+        """Verify append() uses 'a' mode, not 'w' mode.
+
+        We simulate this by pre-writing a marker to the file and
+        checking it survives the append.
+        """
+        log_file = tmp_path / "audit.jsonl"
+
+        # Write a valid entry manually first
+        log = AuditLog(session_id="test-session")
+        log.record(action="marker", actor="a", target="t", result="ok")
+        log.save(log_file)  # Use save() to write the marker
+
+        # Create a NEW log, record entries, and append
+        log2 = AuditLog(session_id="test-session-2")
+        log2.record(action="new-entry", actor="b", target="t2", result="ok")
+        log2.append(log_file)
+
+        # The file should contain both the marker AND the new entry
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 2
+        assert json.loads(lines[0])["action"] == "marker"
+        assert json.loads(lines[1])["action"] == "new-entry"
+
+    def test_append_with_string_path(self, tmp_path: Path) -> None:
+        """append() accepts string paths."""
+        log_file = str(tmp_path / "audit.jsonl")
+        log = AuditLog(session_id="test-session")
+        log.record(action="test", actor="a", target="t", result="ok")
+        log.append(log_file)
+        assert Path(log_file).exists()
+
+    def test_append_creates_parent_dirs(self, tmp_path: Path) -> None:
+        """append() creates parent directories if needed."""
+        log_file = tmp_path / "subdir" / "deep" / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+        log.record(action="test", actor="a", target="t", result="ok")
+        log.append(log_file)
+        assert log_file.exists()
+
+    def test_append_tracks_persisted_count(self, tmp_path: Path) -> None:
+        """After append(), subsequent appends skip already-written entries."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+
+        # Record 5 entries, appending after each one
+        for i in range(5):
+            log.record(action=f"a{i}", actor="a", target="t", result="ok")
+            log.append(log_file)
+
+        # File should have exactly 5 lines (not 1+2+3+4+5=15)
+        lines = log_file.read_text().strip().split("\n")
+        assert len(lines) == 5
+
+    def test_append_preserves_chain_across_calls(self, tmp_path: Path) -> None:
+        """Hash chain is consistent across multiple append() calls."""
+        log_file = tmp_path / "audit.jsonl"
+        log = AuditLog(session_id="test-session")
+
+        for i in range(10):
+            log.record(action=f"a{i}", actor="a", target="t", result="ok")
+            log.append(log_file)
+
+        loaded = AuditLog.load(log_file, session_id="test-session")
+        assert len(loaded.entries) == 10
+        assert loaded.verify() is True
+
+        # Verify chain links explicitly
+        for i in range(1, 10):
+            assert loaded.entries[i].previous_hash == loaded.entries[i - 1].entry_hash

@@ -42,6 +42,7 @@ class AuditLog:
         """
         self._session_id = session_id
         self._entries: list[AuditEntry] = []
+        self._persisted_count: int = 0
 
     @property
     def session_id(self) -> str:
@@ -88,9 +89,10 @@ class AuditLog:
         return entry
 
     def save(self, path: str | Path) -> None:
-        """Save the audit log to a JSONL file.
+        """Save the full audit log to a JSONL file.
 
-        Each entry is written as a single JSON line.
+        Overwrites the file with ALL entries. Use :meth:`append` for
+        incremental, append-only persistence during a session.
 
         Args:
             path: File path to write to.
@@ -100,6 +102,35 @@ class AuditLog:
             for entry in self._entries:
                 line = json.dumps(entry.to_dict(), ensure_ascii=True)
                 f.write(line + "\n")
+
+    def append(self, path: str | Path) -> None:
+        """Append only new entries to a JSONL file.
+
+        Writes entries added since the last ``append()`` call using
+        file append mode (``'a'``), ensuring previously persisted
+        entries are never rewritten. Creates the file and parent
+        directories if they don't exist.
+
+        This is the preferred persistence method during a session
+        because it provides true append-only semantics at the
+        filesystem level.
+
+        Args:
+            path: File path to append to.
+        """
+        new_entries = self._entries[self._persisted_count :]
+        if not new_entries:
+            return
+
+        file_path = Path(path)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with file_path.open("a", encoding="utf-8") as f:
+            for entry in new_entries:
+                line = json.dumps(entry.to_dict(), ensure_ascii=True)
+                f.write(line + "\n")
+
+        self._persisted_count = len(self._entries)
 
     @classmethod
     def load(cls, path: str | Path, session_id: str) -> AuditLog:

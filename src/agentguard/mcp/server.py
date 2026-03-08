@@ -97,11 +97,16 @@ def create_server(
         return None
 
     def _save_audit() -> None:
-        """Save the audit log to disk if audit_dir is configured."""
+        """Append new audit entries to disk if audit_dir is configured.
+
+        Uses append-only semantics: only entries recorded since the
+        last call are written, using file append mode ('a'). This
+        ensures previously persisted entries are never rewritten.
+        """
         if audit_dir is not None:
             audit_path = Path(audit_dir)
             audit_path.mkdir(parents=True, exist_ok=True)
-            audit_log.save(audit_path / f"{session_id}.jsonl")
+            audit_log.append(audit_path / f"{session_id}.jsonl")
 
     # --- create FastMCP app -------------------------------------------
 
