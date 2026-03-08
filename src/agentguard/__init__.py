@@ -7,7 +7,7 @@ from agentguard.guardrails.guardrail import ExecutionResult, Guardrail
 from agentguard.guardrails.models import ActionResult
 from agentguard.policies.guard import Guard
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ActionResult",
