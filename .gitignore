@@ -2,6 +2,7 @@
 private/
 output/
 .opencode/
+.agentguard/
 AGENTS.md
 AGENTS.core.md
 AGENTS.worker.md
