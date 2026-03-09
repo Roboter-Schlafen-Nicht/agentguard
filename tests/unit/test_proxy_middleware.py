@@ -911,3 +911,179 @@ class TestAuditMetadataEnrichment:
         long_tokens = int(mw.audit_log.entries[-1].metadata["token_estimate"])
 
         assert long_tokens > short_tokens
+
+
+# ===========================================================================
+# Test: Streaming response scanning
+# ===========================================================================
+
+
+class TestStreamingResponseScanning:
+    """Test inbound scanning of streaming LLM responses."""
+
+    @pytest.mark.anyio
+    async def test_streaming_with_scan_responses_creates_scanner(
+        self, response_policy_dir: Path
+    ) -> None:
+        """When scan_responses=True and streaming, scanner should be used."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(response_policy_dir),
+            scan_responses=True,
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body(stream=True))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        # Simulate benign SSE lines
+        async def fake_aiter_lines():
+            lines = [
+                'data: {"choices": [{"delta": {"content": "Hello"}}]}',
+                'data: {"choices": [{"delta": {"content": " world"}}]}',
+                "data: [DONE]",
+            ]
+            for line in lines:
+                yield line
+
+        mock_response.aiter_lines = fake_aiter_lines
+
+        mock_client = AsyncMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
+            response = await mw.handle_request(request)
+
+        assert response.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_streaming_scan_denial_audited(
+        self, response_policy_dir: Path
+    ) -> None:
+        """Streaming scan denial should be recorded in the audit log."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(response_policy_dir),
+            scan_responses=True,
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body(stream=True))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        # SSE stream with harmful content
+        async def fake_aiter_lines():
+            lines = [
+                'data: {"choices": [{"delta": {"content": "HARMFUL_CONTENT"}}]}',
+                "data: [DONE]",
+            ]
+            for line in lines:
+                yield line
+
+        mock_response.aiter_lines = fake_aiter_lines
+
+        mock_client = AsyncMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
+            response = await mw.handle_request(request)
+
+        # Should still return 200 (streaming response — denial is in-band)
+        assert response.status_code == 200
+
+        # Consume the streaming body to trigger the scanning
+        body_chunks = []
+        async for chunk in response.body_iterator:
+            body_chunks.append(chunk)
+
+        # Verify the stream contains the warning event
+        full_body = b"".join(
+            c if isinstance(c, bytes) else c.encode() for c in body_chunks
+        )
+        assert b"blocked" in full_body or b"error" in full_body
+
+        # Check audit log — should have request allowed + response denied
+        entries = mw.audit_log.entries
+        response_entries = [e for e in entries if e.action == "llm_response"]
+        assert len(response_entries) == 1
+        assert response_entries[0].result == "denied"
+
+    @pytest.mark.anyio
+    async def test_streaming_scan_clean_stream_audited(
+        self, response_policy_dir: Path
+    ) -> None:
+        """Clean streaming response should be audited as allowed."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(response_policy_dir),
+            scan_responses=True,
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body(stream=True))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        async def fake_aiter_lines():
+            lines = [
+                'data: {"choices": [{"delta": {"content": "safe"}}]}',
+                'data: {"choices": [{"delta": {"content": " content"}}]}',
+                "data: [DONE]",
+            ]
+            for line in lines:
+                yield line
+
+        mock_response.aiter_lines = fake_aiter_lines
+
+        mock_client = AsyncMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
+            response = await mw.handle_request(request)
+
+        # Consume the streaming body to trigger the scanning
+        async for _chunk in response.body_iterator:
+            pass
+
+        # Check audit log — should have request allowed + response allowed
+        entries = mw.audit_log.entries
+        response_entries = [e for e in entries if e.action == "llm_response"]
+        assert len(response_entries) == 1
+        assert response_entries[0].result == "allowed"
+        assert "scanned_length" in response_entries[0].metadata
+
+    @pytest.mark.anyio
+    async def test_streaming_no_scan_responses_no_scanner(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Without scan_responses, streaming should not create a scanner."""
+        # base_config has scan_responses=False by default
+        mw = GuardMiddleware(base_config)
+        request = _make_request(body=_openai_request_body(stream=True))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        async def fake_aiter_bytes():
+            yield b"data: {}\n\n"
+
+        mock_response.aiter_bytes = fake_aiter_bytes
+
+        mock_client = MagicMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
+            response = await mw.handle_request(request)
+
+        assert response.status_code == 200
+        # No response audit entries since scan_responses is False
+        response_entries = [
+            e for e in mw.audit_log.entries if e.action == "llm_response"
+        ]
+        assert len(response_entries) == 0
