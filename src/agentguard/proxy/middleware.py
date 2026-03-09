@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 
 from agentguard.audit.log import AuditLog
 from agentguard.policies.guard import Guard
+
+
+class _StreamContext(NamedTuple):
+    """Holds the httpx client and streaming response for cleanup."""
+
+    client: Any  # httpx.AsyncClient
+    response: Any  # httpx.Response
 
 
 class GuardMiddleware:
@@ -151,9 +158,10 @@ class GuardMiddleware:
             is_streaming = self._is_streaming_request(body)
 
             if is_streaming:
-                upstream_response = await self._forward_streaming(
+                stream_ctx = await self._forward_streaming(
                     request.method, upstream_url, headers, body
                 )
+                upstream_response = stream_ctx.response
             else:
                 upstream_response = await self._forward_request(
                     request.method, upstream_url, headers, body
@@ -186,8 +194,13 @@ class GuardMiddleware:
         self._save_audit()
 
         if is_streaming:
-            # Return streaming response
+            from starlette.background import BackgroundTask
+
+            # Return streaming response with cleanup task
             response_headers = self._filter_response_headers(upstream_response.headers)
+            cleanup = BackgroundTask(
+                self._cleanup_stream, stream_ctx.client, stream_ctx.response
+            )
             return StreamingResponse(
                 upstream_response.aiter_bytes(),
                 status_code=upstream_response.status_code,
@@ -195,6 +208,7 @@ class GuardMiddleware:
                 media_type=upstream_response.headers.get(
                     "content-type", "text/event-stream"
                 ),
+                background=cleanup,
             )
 
         # Non-streaming: optionally scan response
@@ -263,11 +277,13 @@ class GuardMiddleware:
         url: str,
         headers: dict[str, str],
         body: bytes,
-    ) -> Any:
+    ) -> _StreamContext:
         """Forward a streaming request to the upstream.
 
-        Returns an httpx Response with stream NOT consumed, so the
-        caller can iterate over it.
+        Returns a _StreamContext containing the httpx client and
+        Response with stream NOT consumed, so the caller can iterate
+        over it.  The caller MUST ensure both are closed when done
+        (via _cleanup_stream).
         """
         import httpx
 
@@ -281,7 +297,17 @@ class GuardMiddleware:
             ),
             stream=True,
         )
-        return response
+        return _StreamContext(client=client, response=response)
+
+    @staticmethod
+    async def _cleanup_stream(client: Any, response: Any) -> None:
+        """Close the streaming response and httpx client.
+
+        Attached as a BackgroundTask to StreamingResponse so cleanup
+        happens after the response body has been fully sent.
+        """
+        await response.aclose()
+        await client.aclose()
 
     def _is_streaming_request(self, body: bytes) -> bool:
         """Check if the request asks for streaming."""

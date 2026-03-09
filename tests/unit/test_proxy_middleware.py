@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agentguard.proxy.config import ProxyConfig
-from agentguard.proxy.middleware import GuardMiddleware
+from agentguard.proxy.middleware import GuardMiddleware, _StreamContext
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -594,7 +594,10 @@ class TestStreamingRequestForwarding:
 
         mock_response.aiter_bytes = fake_aiter_bytes
 
-        with patch.object(mw, "_forward_streaming", return_value=mock_response):
+        mock_client = MagicMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
             response = await mw.handle_request(request)
 
         assert response.status_code == 200
@@ -619,6 +622,43 @@ class TestStreamingRequestForwarding:
             response = await mw.handle_request(request)
 
         assert response.status_code == 502
+
+    @pytest.mark.anyio
+    async def test_streaming_response_has_background_cleanup(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Streaming response should have a BackgroundTask for cleanup."""
+        mw = GuardMiddleware(base_config)
+        request = _make_request(body=_openai_request_body(stream=True))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        async def fake_aiter_bytes():
+            yield b"data: {}\n\n"
+
+        mock_response.aiter_bytes = fake_aiter_bytes
+
+        mock_client = MagicMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
+            response = await mw.handle_request(request)
+
+        # StreamingResponse should have background task attached
+        assert response.background is not None
+
+    @pytest.mark.anyio
+    async def test_cleanup_stream_closes_response_and_client(self) -> None:
+        """_cleanup_stream should close both response and client."""
+        mock_client = AsyncMock()
+        mock_response = AsyncMock()
+
+        await GuardMiddleware._cleanup_stream(mock_client, mock_response)
+
+        mock_response.aclose.assert_awaited_once()
+        mock_client.aclose.assert_awaited_once()
 
 
 # ===========================================================================
