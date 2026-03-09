@@ -381,3 +381,48 @@ class TestExtractResponseParamsEdgeCases:
         body = json.dumps({"id": "abc", "object": "chat.completion"}).encode()
         params = extract_response_params(body)
         assert params == {}
+
+
+# ===========================================================================
+# Scanner delegation to provider
+# ===========================================================================
+
+
+class TestScannerProviderDelegation:
+    """Test that scanner functions can delegate to a provider."""
+
+    def test_request_params_match_openai_provider(self) -> None:
+        """Scanner request params match OpenAI provider."""
+        from agentguard.proxy.providers.openai import OpenAIProvider
+
+        body = json.dumps(
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "system", "content": "Be helpful."},
+                    {"role": "user", "content": "Hello!"},
+                ],
+            }
+        ).encode()
+
+        scanner_params = extract_request_params(body)
+        provider_params = OpenAIProvider().extract_request_params(body)
+
+        # Both should extract the same key params for OpenAI format
+        assert scanner_params["messages"] == provider_params["messages"]
+        assert scanner_params["system"] == provider_params["system"]
+        assert scanner_params["content"] == provider_params["content"]
+        assert scanner_params["model"] == provider_params["model"]
+
+    def test_response_params_match_openai_provider(self) -> None:
+        """Scanner response params match OpenAI provider."""
+        from agentguard.proxy.providers.openai import OpenAIProvider
+
+        body = json.dumps(
+            {"choices": [{"message": {"content": "Hello there!"}}]}
+        ).encode()
+
+        scanner_params = extract_response_params(body)
+        provider_params = OpenAIProvider().extract_response_params(body)
+
+        assert scanner_params["content"] == provider_params["content"]

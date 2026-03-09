@@ -463,3 +463,87 @@ class TestStreamSseResponseWithScanner:
 
         # When scanner is active, the collected field should be None
         assert all(c[1] is None for c in chunks)
+
+
+# ===========================================================================
+# Tests: stream_sse_response with Provider
+# ===========================================================================
+
+
+class TestStreamSseResponseWithProvider:
+    """Test SSE streaming with a Provider for content extraction."""
+
+    @pytest.mark.anyio
+    async def test_provider_extracts_content_for_collect(self) -> None:
+        """Provider should be used for content extraction when collecting."""
+        from agentguard.proxy.providers.openai import OpenAIProvider
+
+        provider = OpenAIProvider()
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": " world"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [
+            (c, s)
+            async for c, s in stream_sse_response(resp, collect=True, provider=provider)
+        ]
+
+        _last_chunk, collected = chunks[-1]
+        assert collected == "Hello world"
+
+    @pytest.mark.anyio
+    async def test_provider_extracts_content_for_scanner(self) -> None:
+        """Provider should be used for content extraction with scanner."""
+        import re
+
+        from agentguard.policies.models import Policy, Rule
+        from agentguard.proxy.inbound import InboundScanner
+        from agentguard.proxy.providers.openai import OpenAIProvider
+
+        rule = Rule(
+            action_kind="llm_response",
+            deny_patterns=[re.compile(r"BLOCKED")],
+            severity="high",
+            description="Test deny rule",
+        )
+        policy = Policy(name="test-policy", rules=[rule], description="Test")
+        guard = Guard()
+        guard.add_policy(policy)
+        scanner = InboundScanner(guard)
+        provider = OpenAIProvider()
+
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "ok "}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": "BLOCKED"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": " more"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [
+            (c, s)
+            async for c, s in stream_sse_response(
+                resp, scanner=scanner, provider=provider
+            )
+        ]
+
+        # Should detect denial: chunk1 + chunk2 + warning + done = 4
+        assert len(chunks) == 4
+        assert b"blocked" in chunks[-2][0] or b"error" in chunks[-2][0]
+
+    @pytest.mark.anyio
+    async def test_provider_none_uses_fallback(self) -> None:
+        """Passing provider=None should fall back to _extract_content_parts."""
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [
+            (c, s)
+            async for c, s in stream_sse_response(resp, collect=True, provider=None)
+        ]
+
+        _last_chunk, collected = chunks[-1]
+        assert collected == "Hello"

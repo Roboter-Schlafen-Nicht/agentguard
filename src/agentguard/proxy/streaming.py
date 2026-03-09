@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     import httpx
 
     from agentguard.proxy.inbound import InboundScanner
+    from agentguard.proxy.providers import Provider
 
 
 def _extract_content_parts(data_str: str) -> list[str]:
@@ -70,6 +71,7 @@ async def stream_sse_response(
     *,
     collect: bool = False,
     scanner: InboundScanner | None = None,
+    provider: Provider | None = None,
 ) -> AsyncIterator[tuple[bytes, str | None]]:
     """Stream SSE chunks from an upstream response.
 
@@ -85,10 +87,15 @@ async def stream_sse_response(
     is active, it supersedes ``collect`` — no final collected
     content chunk is produced.
 
+    If ``provider`` is given, its ``extract_stream_content()``
+    method is used for content extraction instead of the built-in
+    ``_extract_content_parts()`` fallback.
+
     Args:
         upstream_response: The httpx streaming response.
         collect: Whether to accumulate content for scanning.
         scanner: Optional inbound scanner for real-time scanning.
+        provider: Optional provider adapter for content extraction.
 
     Yields:
         Tuples of ``(chunk_bytes, collected_content_or_none)``.
@@ -106,7 +113,10 @@ async def stream_sse_response(
 
         if line.startswith("data: "):
             data_str = line[6:]
-            parts = _extract_content_parts(data_str)
+            if provider is not None:
+                parts = provider.extract_stream_content(data_str)
+            else:
+                parts = _extract_content_parts(data_str)
 
             if use_collect:
                 collected_parts.extend(parts)

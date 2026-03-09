@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from starlette.responses import Response
 
     from agentguard.proxy.config import ProxyConfig
+    from agentguard.proxy.providers import Provider
 
 from agentguard.audit.log import AuditLog
 from agentguard.policies.guard import Guard
@@ -58,6 +59,7 @@ class GuardMiddleware:
         """
         self.config = config
         self.guard = self._build_guard()
+        self.provider = self._resolve_provider()
         self.session_id = f"proxy-{uuid.uuid4().hex[:12]}"
         self.audit_log = AuditLog(self.session_id)
 
@@ -86,6 +88,19 @@ class GuardMiddleware:
                 guard.add_policy(policy)
 
         return guard
+
+    def _resolve_provider(self) -> Provider | None:
+        """Resolve the provider adapter from the config.
+
+        Returns:
+            A Provider instance if configured, or None to use the
+            legacy scanner module fallback.
+        """
+        if self.config.provider is not None:
+            from agentguard.proxy.providers import detect_provider
+
+            return detect_provider(provider_name=self.config.provider)
+        return None
 
     async def handle_request(self, request: Request) -> Response:
         """Handle an incoming LLM API request.
@@ -117,7 +132,10 @@ class GuardMiddleware:
 
         # Extract and scan request content
         try:
-            params = extract_request_params(body)
+            if self.provider is not None:
+                params = self.provider.extract_request_params(body)
+            else:
+                params = extract_request_params(body)
         except ValueError:
             # Non-JSON body — pass through without scanning
             params = {}
@@ -216,7 +234,7 @@ class GuardMiddleware:
 
                 async def _scanning_generator() -> AsyncGenerator[bytes, None]:
                     async for chunk_bytes, _collected in stream_sse_response(
-                        upstream_response, scanner=scanner
+                        upstream_response, scanner=scanner, provider=self.provider
                     ):
                         yield chunk_bytes
 
@@ -279,7 +297,12 @@ class GuardMiddleware:
         response_body = upstream_response.content
         if self.config.scan_responses and response_body:
             try:
-                response_params = extract_response_params(response_body)
+                if self.provider is not None:
+                    response_params = self.provider.extract_response_params(
+                        response_body
+                    )
+                else:
+                    response_params = extract_response_params(response_body)
                 if response_params:
                     response_decision = self.guard.check(
                         "llm_response", **response_params
