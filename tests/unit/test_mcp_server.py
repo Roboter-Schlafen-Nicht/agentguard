@@ -127,6 +127,719 @@ async def with_server(
 
 
 # ===========================================================================
+# Test: Tool parameter definitions for new tools
+# ===========================================================================
+
+
+class TestNewToolDefinitions:
+    """Test that new MCP tools have the expected parameter schemas."""
+
+    @pytest.mark.anyio
+    async def test_file_edit_tool_has_expected_params(self) -> None:
+        """file_edit should accept path, old_string, new_string, replace_all."""
+
+        async def check(session: ClientSession) -> None:
+            tools_resp = await session.list_tools()
+            edit = next(t for t in tools_resp.tools if t.name == "file_edit")
+            props = edit.inputSchema.get("properties", {})
+            assert "path" in props
+            assert "old_string" in props
+            assert "new_string" in props
+            assert "replace_all" in props
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_file_glob_tool_has_expected_params(self) -> None:
+        """file_glob should accept pattern and optional path."""
+
+        async def check(session: ClientSession) -> None:
+            tools_resp = await session.list_tools()
+            glob_tool = next(t for t in tools_resp.tools if t.name == "file_glob")
+            props = glob_tool.inputSchema.get("properties", {})
+            assert "pattern" in props
+            assert "path" in props
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_file_grep_tool_has_expected_params(self) -> None:
+        """file_grep should accept pattern, optional path, optional include."""
+
+        async def check(session: ClientSession) -> None:
+            tools_resp = await session.list_tools()
+            grep_tool = next(t for t in tools_resp.tools if t.name == "file_grep")
+            props = grep_tool.inputSchema.get("properties", {})
+            assert "pattern" in props
+            assert "path" in props
+            assert "include" in props
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_file_list_tool_has_expected_params(self) -> None:
+        """file_list should accept optional path."""
+
+        async def check(session: ClientSession) -> None:
+            tools_resp = await session.list_tools()
+            list_tool = next(t for t in tools_resp.tools if t.name == "file_list")
+            props = list_tool.inputSchema.get("properties", {})
+            assert "path" in props
+
+        await with_server(check)
+
+
+# ===========================================================================
+# Test: File edit
+# ===========================================================================
+
+
+class TestFileEdit:
+    """Test the file_edit tool."""
+
+    @pytest.mark.anyio
+    async def test_edit_replaces_string(self, tmp_path: Path) -> None:
+        """Should replace old_string with new_string in a file."""
+        target = tmp_path / "edit_test.txt"
+        target.write_text("hello world")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "hello",
+                    "new_string": "goodbye",
+                },
+            )
+            assert not result.isError
+            assert target.read_text() == "goodbye world"
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_nonexistent_file_errors(self, tmp_path: Path) -> None:
+        """Should error when file does not exist."""
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(tmp_path / "missing.txt"),
+                    "old_string": "a",
+                    "new_string": "b",
+                },
+            )
+            assert result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_string_not_found_errors(self, tmp_path: Path) -> None:
+        """Should error when old_string is not found in the file."""
+        target = tmp_path / "no_match.txt"
+        target.write_text("foo bar")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "xyz",
+                    "new_string": "abc",
+                },
+            )
+            assert result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_identical_strings_errors(self, tmp_path: Path) -> None:
+        """Should error when old_string equals new_string."""
+        target = tmp_path / "identical.txt"
+        target.write_text("hello")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "hello",
+                    "new_string": "hello",
+                },
+            )
+            assert result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_multiple_matches_errors_without_replace_all(
+        self, tmp_path: Path
+    ) -> None:
+        """Should error when multiple matches found and replace_all is False."""
+        target = tmp_path / "multi.txt"
+        target.write_text("abc abc abc")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "abc",
+                    "new_string": "xyz",
+                },
+            )
+            assert result.isError
+            # File should be unchanged
+            assert target.read_text() == "abc abc abc"
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_replace_all_replaces_all_occurrences(
+        self, tmp_path: Path
+    ) -> None:
+        """Should replace all occurrences when replace_all is True."""
+        target = tmp_path / "replace_all.txt"
+        target.write_text("abc abc abc")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "abc",
+                    "new_string": "xyz",
+                    "replace_all": True,
+                },
+            )
+            assert not result.isError
+            assert target.read_text() == "xyz xyz xyz"
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_preserves_rest_of_file(self, tmp_path: Path) -> None:
+        """Edit should only change the matched portion, leaving rest intact."""
+        target = tmp_path / "partial.txt"
+        target.write_text("line1\nline2\nline3\n")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "line2",
+                    "new_string": "REPLACED",
+                },
+            )
+            assert not result.isError
+            assert target.read_text() == "line1\nREPLACED\nline3\n"
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_edit_is_audited(self, tmp_path: Path, audit_dir: Path) -> None:
+        """Edit actions should appear in the audit log."""
+        target = tmp_path / "audited.txt"
+        target.write_text("before")
+
+        async def check(session: ClientSession) -> None:
+            await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "before",
+                    "new_string": "after",
+                },
+            )
+            result = await session.call_tool(
+                "agentguard_audit_query", {"action": "file_edit"}
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "file_edit" in text
+            assert "allowed" in text
+
+        await with_server(check, audit_dir=audit_dir)
+
+    @pytest.mark.anyio
+    async def test_edit_denied_by_policy(self, tmp_path: Path) -> None:
+        """Edit should be blocked by a matching deny policy."""
+        policy_d = tmp_path / "policies"
+        policy_d.mkdir()
+        (policy_d / "block-edit.yaml").write_text(
+            "name: block-edit\n"
+            "description: Block editing sensitive files\n"
+            "rules:\n"
+            "  - action: file_edit\n"
+            "    deny:\n"
+            "      - pattern: 'secret'\n"
+            "    severity: critical\n"
+        )
+        target = tmp_path / "secret_config.txt"
+        target.write_text("password=old")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_edit",
+                {
+                    "path": str(target),
+                    "old_string": "password=old",
+                    "new_string": "password=new",
+                },
+            )
+            assert result.isError
+            # File should be unchanged
+            assert target.read_text() == "password=old"
+
+        await with_server(check, policy_dir=policy_d)
+
+
+# ===========================================================================
+# Test: File glob
+# ===========================================================================
+
+
+class TestFileGlob:
+    """Test the file_glob tool."""
+
+    @pytest.mark.anyio
+    async def test_glob_finds_matching_files(self, tmp_path: Path) -> None:
+        """Should find files matching a glob pattern."""
+        (tmp_path / "file1.py").write_text("# python")
+        (tmp_path / "file2.py").write_text("# python")
+        (tmp_path / "file3.txt").write_text("text")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*.py", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "file1.py" in text
+            assert "file2.py" in text
+            assert "file3.txt" not in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_glob_no_matches_returns_empty(self, tmp_path: Path) -> None:
+        """Should return empty/no-matches message when no files match."""
+        (tmp_path / "file.txt").write_text("text")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*.rs", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "no" in text.lower() or text.strip() == "" or "0" in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_glob_nested_directories(self, tmp_path: Path) -> None:
+        """Should find files in nested subdirectories."""
+        sub = tmp_path / "sub" / "deep"
+        sub.mkdir(parents=True)
+        (sub / "found.py").write_text("# found")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*.py", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            assert "found.py" in result.content[0].text  # type: ignore[union-attr]
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_glob_caps_results_at_100(self, tmp_path: Path) -> None:
+        """Should cap results at 100 files."""
+        for i in range(120):
+            (tmp_path / f"file_{i:03d}.txt").write_text(f"content {i}")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*.txt", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            # Should have at most 100 file entries
+            lines = [ln for ln in text.strip().split("\n") if ln.strip()]
+            assert len(lines) <= 101  # 100 files + possible truncation msg
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_glob_is_audited(self, tmp_path: Path, audit_dir: Path) -> None:
+        """Glob actions should appear in the audit log."""
+        (tmp_path / "test.py").write_text("# test")
+
+        async def check(session: ClientSession) -> None:
+            await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*.py", "path": str(tmp_path)},
+            )
+            result = await session.call_tool(
+                "agentguard_audit_query", {"action": "file_glob"}
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "file_glob" in text
+
+        await with_server(check, audit_dir=audit_dir)
+
+    @pytest.mark.anyio
+    async def test_glob_denied_by_policy(self, tmp_path: Path) -> None:
+        """Glob should be blocked by a matching deny policy."""
+        policy_d = tmp_path / "policies"
+        policy_d.mkdir()
+        (policy_d / "block-glob.yaml").write_text(
+            "name: block-glob\n"
+            "description: Block glob on private dirs\n"
+            "rules:\n"
+            "  - action: file_glob\n"
+            "    deny:\n"
+            "      - pattern: 'private'\n"
+            "    severity: high\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*", "path": str(tmp_path / "private")},
+            )
+            assert result.isError
+
+        await with_server(check, policy_dir=policy_d)
+
+
+# ===========================================================================
+# Test: File grep
+# ===========================================================================
+
+
+class TestFileGrep:
+    """Test the file_grep tool."""
+
+    @pytest.mark.anyio
+    async def test_grep_finds_matching_content(self, tmp_path: Path) -> None:
+        """Should find files containing the search pattern."""
+        (tmp_path / "match.py").write_text("def hello():\n    return 'hi'\n")
+        (tmp_path / "no_match.py").write_text("def goodbye():\n    return 'bye'\n")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "hello", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "match.py" in text
+            assert "hello" in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_no_matches(self, tmp_path: Path) -> None:
+        """Should indicate no matches when pattern not found."""
+        (tmp_path / "file.py").write_text("nothing here")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "nonexistent_pattern_xyz", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "no" in text.lower() or text.strip() == "" or "0" in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_with_include_filter(self, tmp_path: Path) -> None:
+        """Should only search files matching the include pattern."""
+        (tmp_path / "match.py").write_text("target_string")
+        (tmp_path / "match.txt").write_text("target_string")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {
+                    "pattern": "target_string",
+                    "path": str(tmp_path),
+                    "include": "*.py",
+                },
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "match.py" in text
+            assert "match.txt" not in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_returns_line_numbers(self, tmp_path: Path) -> None:
+        """Should include line numbers in the results."""
+        (tmp_path / "lined.py").write_text("line1\nline2\ntarget\nline4\n")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "target", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            # Should contain line number 3
+            assert "3" in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_regex_patterns(self, tmp_path: Path) -> None:
+        """Should support regex patterns."""
+        (tmp_path / "regex_test.py").write_text(
+            "def func_one():\n    pass\ndef func_two():\n    pass\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "def func_\\w+", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "func_one" in text or "func_two" in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_nested_directories(self, tmp_path: Path) -> None:
+        """Should search files in nested subdirectories."""
+        sub = tmp_path / "sub" / "deep"
+        sub.mkdir(parents=True)
+        (sub / "nested.py").write_text("nested_target_value")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "nested_target_value", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            assert "nested.py" in result.content[0].text  # type: ignore[union-attr]
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_is_audited(self, tmp_path: Path, audit_dir: Path) -> None:
+        """Grep actions should appear in the audit log."""
+        (tmp_path / "test.py").write_text("searchable content")
+
+        async def check(session: ClientSession) -> None:
+            await session.call_tool(
+                "file_grep",
+                {"pattern": "searchable", "path": str(tmp_path)},
+            )
+            result = await session.call_tool(
+                "agentguard_audit_query", {"action": "file_grep"}
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "file_grep" in text
+
+        await with_server(check, audit_dir=audit_dir)
+
+    @pytest.mark.anyio
+    async def test_grep_denied_by_policy(self, tmp_path: Path) -> None:
+        """Grep should be blocked by a matching deny policy."""
+        policy_d = tmp_path / "policies"
+        policy_d.mkdir()
+        (policy_d / "block-grep.yaml").write_text(
+            "name: block-grep\n"
+            "description: Block grep for secrets\n"
+            "rules:\n"
+            "  - action: file_grep\n"
+            "    deny:\n"
+            "      - pattern: 'password'\n"
+            "    severity: critical\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "password", "path": str(tmp_path)},
+            )
+            assert result.isError
+
+        await with_server(check, policy_dir=policy_d)
+
+    @pytest.mark.anyio
+    async def test_grep_caps_results_at_100(self, tmp_path: Path) -> None:
+        """Should cap results at 100 matches."""
+        for i in range(120):
+            (tmp_path / f"file_{i:03d}.txt").write_text(f"findme content {i}")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "findme", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            # Output should be capped
+            lines = [ln for ln in text.strip().split("\n") if ln.strip()]
+            assert len(lines) <= 110  # some overhead for headers
+
+        await with_server(check)
+
+
+# ===========================================================================
+# Test: File list
+# ===========================================================================
+
+
+class TestFileList:
+    """Test the file_list tool."""
+
+    @pytest.mark.anyio
+    async def test_list_directory_contents(self, tmp_path: Path) -> None:
+        """Should list files and directories in the given path."""
+        (tmp_path / "file1.py").write_text("# python")
+        (tmp_path / "file2.txt").write_text("text")
+        (tmp_path / "subdir").mkdir()
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_list",
+                {"path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "file1.py" in text
+            assert "file2.txt" in text
+            assert "subdir" in text
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_list_marks_directories(self, tmp_path: Path) -> None:
+        """Should mark directories with trailing /."""
+        (tmp_path / "mydir").mkdir()
+        (tmp_path / "myfile.txt").write_text("text")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_list",
+                {"path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "mydir/" in text
+            # File should NOT have trailing /
+            lines = text.strip().split("\n")
+            file_lines = [ln for ln in lines if "myfile.txt" in ln]
+            for fl in file_lines:
+                assert not fl.strip().endswith("/") or "myfile.txt/" not in fl
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_list_empty_directory(self, tmp_path: Path) -> None:
+        """Should handle empty directories gracefully."""
+        empty = tmp_path / "empty"
+        empty.mkdir()
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_list",
+                {"path": str(empty)},
+            )
+            assert not result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_list_nonexistent_path_errors(self, tmp_path: Path) -> None:
+        """Should error for a nonexistent directory."""
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_list",
+                {"path": str(tmp_path / "does_not_exist")},
+            )
+            assert result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_list_caps_at_100_entries(self, tmp_path: Path) -> None:
+        """Should cap at 100 entries."""
+        for i in range(120):
+            (tmp_path / f"file_{i:03d}.txt").write_text(f"content {i}")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_list",
+                {"path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            lines = [ln for ln in text.strip().split("\n") if ln.strip()]
+            assert len(lines) <= 101  # 100 entries + possible truncation msg
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_list_is_audited(self, tmp_path: Path, audit_dir: Path) -> None:
+        """List actions should appear in the audit log."""
+        (tmp_path / "test.py").write_text("# test")
+
+        async def check(session: ClientSession) -> None:
+            await session.call_tool(
+                "file_list",
+                {"path": str(tmp_path)},
+            )
+            result = await session.call_tool(
+                "agentguard_audit_query", {"action": "file_list"}
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            assert "file_list" in text
+
+        await with_server(check, audit_dir=audit_dir)
+
+    @pytest.mark.anyio
+    async def test_list_denied_by_policy(self, tmp_path: Path) -> None:
+        """List should be blocked by a matching deny policy."""
+        policy_d = tmp_path / "policies"
+        policy_d.mkdir()
+        (policy_d / "block-list.yaml").write_text(
+            "name: block-list\n"
+            "description: Block listing private dirs\n"
+            "rules:\n"
+            "  - action: file_list\n"
+            "    deny:\n"
+            "      - pattern: 'private'\n"
+            "    severity: high\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_list",
+                {"path": str(tmp_path / "private")},
+            )
+            assert result.isError
+
+        await with_server(check, policy_dir=policy_d)
+
+
+# ===========================================================================
 # Test: Server creation and tool listing
 # ===========================================================================
 
@@ -136,8 +849,9 @@ class TestServerToolDefinitions:
 
     @pytest.mark.anyio
     async def test_server_lists_tools(self) -> None:
-        """Server should expose shell_execute, file_read, file_write,
-        agentguard_status, and agentguard_audit_query tools."""
+        """Server should expose all 9 tools: shell_execute, file_read,
+        file_write, file_edit, file_glob, file_grep, file_list,
+        agentguard_status, and agentguard_audit_query."""
 
         async def check(session: ClientSession) -> None:
             tools_resp = await session.list_tools()
@@ -145,6 +859,10 @@ class TestServerToolDefinitions:
             assert "shell_execute" in tool_names
             assert "file_read" in tool_names
             assert "file_write" in tool_names
+            assert "file_edit" in tool_names
+            assert "file_glob" in tool_names
+            assert "file_grep" in tool_names
+            assert "file_list" in tool_names
             assert "agentguard_status" in tool_names
             assert "agentguard_audit_query" in tool_names
 

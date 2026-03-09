@@ -1,13 +1,17 @@
 """AgentGuard MCP Server -- transparent proxy with policy enforcement.
 
-Creates a FastMCP server exposing shell_execute, file_read, and
-file_write tools that transparently enforce loaded policies and
-record all actions in a tamper-evident audit log.
+Creates a FastMCP server exposing shell_execute, file_read, file_write,
+file_edit, file_glob, file_grep, and file_list tools that transparently
+enforce loaded policies and record all actions in a tamper-evident audit
+log.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import json
+import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -86,6 +90,10 @@ def create_server(
             "shell_execute": "shell_command",
             "file_read": "file_read",
             "file_write": "file_write",
+            "file_edit": "file_edit",
+            "file_glob": "file_glob",
+            "file_grep": "file_grep",
+            "file_list": "file_list",
         }
         legacy_kind = legacy_map.get(action_kind)
         if legacy_kind and legacy_kind != action_kind:
@@ -316,6 +324,454 @@ def create_server(
         )
         _save_audit()
         return f"Wrote {byte_length} bytes to {path}"
+
+    @app.tool()
+    def file_edit(
+        path: str,
+        old_string: str,
+        new_string: str,
+        replace_all: bool = False,
+    ) -> str:
+        """Perform exact string replacements in a file.
+
+        Finds ``old_string`` in the file and replaces it with
+        ``new_string``. By default only a single unique match is
+        allowed; set ``replace_all=True`` to replace every occurrence.
+
+        Args:
+            path: Path to the file to edit (absolute or relative to cwd).
+            old_string: The exact text to find and replace.
+            new_string: The replacement text (must differ from old_string).
+            replace_all: Replace all occurrences (default False).
+
+        Returns:
+            Confirmation message with replacement count.
+        """
+        denial = _check_guard(
+            "file_edit",
+            path=path,
+            old_string=old_string,
+            new_string=new_string,
+        )
+        if denial:
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="denied",
+            )
+            _save_audit()
+            raise _tool_error(denial)
+
+        if old_string == new_string:
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "identical strings"},
+            )
+            _save_audit()
+            raise _tool_error(
+                "No changes to apply: old_string and new_string are identical."
+            )
+
+        file_path = Path(path)
+        if not file_path.exists():
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "not found"},
+            )
+            _save_audit()
+            raise _tool_error(f"File not found: {path}")
+
+        if not file_path.is_file():
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "not a regular file"},
+            )
+            _save_audit()
+            raise _tool_error(f"Not a regular file: {path}")
+
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "unreadable"},
+            )
+            _save_audit()
+            raise _tool_error(f"Cannot read file: {path}") from None
+
+        count = content.count(old_string)
+
+        if count == 0:
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": "old_string not found"},
+            )
+            _save_audit()
+            raise _tool_error(
+                "oldString not found in content. Provide the exact text to match."
+            )
+
+        if count > 1 and not replace_all:
+            audit_log.record(
+                action="file_edit",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={
+                    "error": "multiple matches",
+                    "count": str(count),
+                },
+            )
+            _save_audit()
+            raise _tool_error(
+                f"Found {count} matches for oldString. Provide more "
+                "surrounding context to make the match unique, or "
+                "set replace_all=True."
+            )
+
+        if replace_all:
+            new_content = content.replace(old_string, new_string)
+        else:
+            new_content = content.replace(old_string, new_string, 1)
+
+        file_path.write_text(new_content, encoding="utf-8")
+
+        audit_log.record(
+            action="file_edit",
+            actor=actor,
+            target=path,
+            result="allowed",
+            metadata={"replacements": str(count if replace_all else 1)},
+        )
+        _save_audit()
+        replaced = count if replace_all else 1
+        return f"Replaced {replaced} occurrence(s) in {path}"
+
+    @app.tool()
+    def file_glob(pattern: str, path: str | None = None) -> str:
+        """Search for files matching a glob pattern.
+
+        Args:
+            pattern: The glob pattern to match files against
+                (e.g. ``**/*.py``).
+            path: The directory to search in. Defaults to the
+                current working directory.
+
+        Returns:
+            Matching file paths, one per line, sorted by
+            modification time (most recent first). Capped at 100.
+        """
+        search_dir = Path(path) if path else Path.cwd()
+
+        denial = _check_guard(
+            "file_glob",
+            pattern=pattern,
+            path=str(search_dir),
+        )
+        if denial:
+            audit_log.record(
+                action="file_glob",
+                actor=actor,
+                target=str(search_dir),
+                result="denied",
+            )
+            _save_audit()
+            raise _tool_error(denial)
+
+        if not search_dir.is_dir():
+            audit_log.record(
+                action="file_glob",
+                actor=actor,
+                target=str(search_dir),
+                result="error",
+                metadata={"error": "not a directory"},
+            )
+            _save_audit()
+            raise _tool_error(f"Directory not found: {search_dir}")
+
+        matches: list[Path] = []
+        try:
+            for p in search_dir.glob(pattern):
+                if p.is_file():
+                    matches.append(p)
+                    if len(matches) >= 100:
+                        break
+        except (OSError, ValueError) as exc:
+            audit_log.record(
+                action="file_glob",
+                actor=actor,
+                target=str(search_dir),
+                result="error",
+                metadata={"error": str(exc)},
+            )
+            _save_audit()
+            raise _tool_error(f"Glob error: {exc}") from None
+
+        # Sort by modification time (most recent first)
+        matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+        audit_log.record(
+            action="file_glob",
+            actor=actor,
+            target=str(search_dir),
+            result="allowed",
+            metadata={
+                "pattern": pattern,
+                "match_count": str(len(matches)),
+            },
+        )
+        _save_audit()
+
+        if not matches:
+            return "No files found matching the pattern."
+
+        lines = [str(m) for m in matches]
+        result_text = "\n".join(lines)
+        if len(matches) >= 100:
+            result_text += (
+                "\n(Results capped at 100. Narrow your pattern "
+                "for more specific results.)"
+            )
+        return result_text
+
+    @app.tool()
+    def file_grep(
+        pattern: str,
+        path: str | None = None,
+        include: str | None = None,
+    ) -> str:
+        """Search file contents using regular expressions.
+
+        Args:
+            pattern: The regex pattern to search for.
+            path: The directory to search in. Defaults to the
+                current working directory.
+            include: File pattern to filter (e.g. ``*.py``,
+                ``*.{ts,tsx}``).
+
+        Returns:
+            Matching files with line numbers and content,
+            capped at 100 matches.
+        """
+        search_dir = Path(path) if path else Path.cwd()
+
+        denial = _check_guard(
+            "file_grep",
+            pattern=pattern,
+            path=str(search_dir),
+        )
+        if denial:
+            audit_log.record(
+                action="file_grep",
+                actor=actor,
+                target=str(search_dir),
+                result="denied",
+            )
+            _save_audit()
+            raise _tool_error(denial)
+
+        if not search_dir.is_dir():
+            audit_log.record(
+                action="file_grep",
+                actor=actor,
+                target=str(search_dir),
+                result="error",
+                metadata={"error": "not a directory"},
+            )
+            _save_audit()
+            raise _tool_error(f"Directory not found: {search_dir}")
+
+        try:
+            regex = re.compile(pattern)
+        except re.error as exc:
+            audit_log.record(
+                action="file_grep",
+                actor=actor,
+                target=str(search_dir),
+                result="error",
+                metadata={"error": f"invalid regex: {exc}"},
+            )
+            _save_audit()
+            raise _tool_error(f"Invalid regex pattern: {exc}") from None
+
+        # Expand include patterns (handle {a,b} syntax)
+        include_patterns: list[str] | None = None
+        if include:
+            # Handle brace expansion like *.{ts,tsx}
+            if "{" in include and "}" in include:
+                prefix, rest = include.split("{", 1)
+                alts, suffix = rest.split("}", 1)
+                include_patterns = [prefix + alt + suffix for alt in alts.split(",")]
+            else:
+                include_patterns = [include]
+
+        matches: list[str] = []
+        match_count = 0
+
+        for root, _dirs, files in os.walk(search_dir):
+            # Sort files for deterministic output
+            for fname in sorted(files):
+                if include_patterns and not any(
+                    fnmatch.fnmatch(fname, pat) for pat in include_patterns
+                ):
+                    continue
+
+                fpath = Path(root) / fname
+                try:
+                    text = fpath.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+                for line_no, line in enumerate(text.splitlines(), 1):
+                    if regex.search(line):
+                        match_count += 1
+                        if match_count <= 100:
+                            # Truncate long lines
+                            display_line = line[:2000]
+                            matches.append(f"{fpath}:{line_no}: {display_line}")
+                        if match_count > 100:
+                            break
+                if match_count > 100:
+                    break
+
+        audit_log.record(
+            action="file_grep",
+            actor=actor,
+            target=str(search_dir),
+            result="allowed",
+            metadata={
+                "pattern": pattern,
+                "match_count": str(match_count),
+            },
+        )
+        _save_audit()
+
+        if not matches:
+            return "No matches found."
+
+        result_text = "\n".join(matches)
+        if match_count > 100:
+            result_text += (
+                f"\n(Showing 100 of {match_count} matches. "
+                "Narrow your pattern for more specific results.)"
+            )
+        return result_text
+
+    @app.tool()
+    def file_list(path: str | None = None) -> str:
+        """List directory contents.
+
+        Args:
+            path: The directory to list. Defaults to the current
+                working directory.
+
+        Returns:
+            Directory entries, one per line. Directories have a
+            trailing ``/``. Capped at 100 entries.
+        """
+        list_dir = Path(path) if path else Path.cwd()
+
+        denial = _check_guard("file_list", path=str(list_dir))
+        if denial:
+            audit_log.record(
+                action="file_list",
+                actor=actor,
+                target=str(list_dir),
+                result="denied",
+            )
+            _save_audit()
+            raise _tool_error(denial)
+
+        if not list_dir.exists():
+            audit_log.record(
+                action="file_list",
+                actor=actor,
+                target=str(list_dir),
+                result="error",
+                metadata={"error": "not found"},
+            )
+            _save_audit()
+            raise _tool_error(f"Directory not found: {list_dir}")
+
+        if not list_dir.is_dir():
+            audit_log.record(
+                action="file_list",
+                actor=actor,
+                target=str(list_dir),
+                result="error",
+                metadata={"error": "not a directory"},
+            )
+            _save_audit()
+            raise _tool_error(f"Not a directory: {list_dir}")
+
+        # Common directories to ignore
+        ignore_dirs = {
+            "node_modules",
+            "__pycache__",
+            ".git",
+            "dist",
+            "build",
+            "target",
+            ".venv",
+            "venv",
+            ".cache",
+            ".coverage",
+        }
+
+        entries: list[str] = []
+        try:
+            for entry in sorted(list_dir.iterdir()):
+                if entry.name in ignore_dirs and entry.is_dir():
+                    continue
+                if entry.is_dir():
+                    entries.append(f"{entry.name}/")
+                else:
+                    entries.append(entry.name)
+                if len(entries) >= 100:
+                    break
+        except OSError as exc:
+            audit_log.record(
+                action="file_list",
+                actor=actor,
+                target=str(list_dir),
+                result="error",
+                metadata={"error": str(exc)},
+            )
+            _save_audit()
+            raise _tool_error(f"Cannot list directory: {exc}") from None
+
+        audit_log.record(
+            action="file_list",
+            actor=actor,
+            target=str(list_dir),
+            result="allowed",
+            metadata={"entry_count": str(len(entries))},
+        )
+        _save_audit()
+
+        if not entries:
+            return "(empty directory)"
+
+        result_text = "\n".join(entries)
+        if len(entries) >= 100:
+            result_text += "\n(Results capped at 100 entries.)"
+        return result_text
 
     @app.tool()
     def agentguard_status() -> str:
