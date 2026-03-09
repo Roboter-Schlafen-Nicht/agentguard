@@ -924,6 +924,31 @@ class TestShellExecute:
         await with_server(check)
 
     @pytest.mark.anyio
+    async def test_execute_uses_bash_when_available(self) -> None:
+        """shell_execute should prefer bash over the default shell."""
+        import shutil
+        from unittest.mock import patch
+
+        bash_path = shutil.which("bash")
+        if bash_path is None:
+            pytest.skip("bash not available on this system")
+
+        with patch("agentguard.mcp.server.subprocess.run") as mock_run:
+            mock_run.return_value = type(
+                "CompletedProcess",
+                (),
+                {"returncode": 0, "stdout": "mocked\n", "stderr": ""},
+            )()
+
+            async def check(session: ClientSession) -> None:
+                await session.call_tool("shell_execute", {"command": "echo mocked"})
+                mock_run.assert_called_once()
+                call_kwargs = mock_run.call_args
+                assert call_kwargs.kwargs.get("executable") == bash_path
+
+            await with_server(check)
+
+    @pytest.mark.anyio
     async def test_execute_failing_command(self) -> None:
         """Should report error for non-zero exit code."""
 

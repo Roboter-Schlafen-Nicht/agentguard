@@ -12,6 +12,7 @@ import fnmatch
 import json
 import os
 import re
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -147,12 +148,14 @@ def create_server(
             raise _tool_error(denial)
 
         try:
+            bash_path = shutil.which("bash")
             proc = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
                 timeout=30,
+                executable=bash_path,
             )
         except subprocess.TimeoutExpired:
             audit_log.record(

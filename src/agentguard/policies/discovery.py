@@ -76,7 +76,7 @@ def discover_policy_dirs(
     # 1. Environment variable directories
     env_value = os.environ.get(_ENV_VAR, "").strip()
     if env_value:
-        for part in env_value.split(":"):
+        for part in env_value.split(os.pathsep):
             part = part.strip()
             if part:
                 candidates.append(Path(part))
