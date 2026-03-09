@@ -39,30 +39,9 @@ AgentGuard guards AI agents at **two layers**:
    real time, including streaming (SSE). Terminates dangerous streams
    mid-flight.
 
-```
-                           ┌──────────────────────────────────────┐
-                           │           AgentGuard                 │
-                           │                                      │
-┌──────────┐   prompts     │  ┌─────────────┐    ┌────────────┐  │  forwarded    ┌─────────┐
-│ AI Agent │ ─────────────►│  │  Outbound    │───►│  LLM API   │──│─────────────► │ LLM API │
-│          │               │  │  Scanner     │    │  Proxy     │  │              │ (OpenAI │
-│          │◄──────────────│  │  (PII/keys)  │◄───│            │◄─│────────────── │  etc.)  │
-└──────────┘   responses   │  └─────────────┘    └────────────┘  │  responses   └─────────┘
-     │                     │        ▲                  ▲          │
-     │  MCP tools          │        │    policy engine │          │
-     │                     │        ▼                  ▼          │
-     │                     │  ┌─────────────┐    ┌────────────┐  │
-     └────────────────────►│  │  MCP Server │    │  Inbound   │  │
-           shell_execute   │  │  (tools)    │    │  Scanner   │  │
-           file_read       │  └─────────────┘    │  (SSE)     │  │
-           file_write      │        │            └────────────┘  │
-                           │        ▼                  │         │
-                           │  ┌─────────────────────────────┐    │
-                           │  │  Hash-Chained Audit Log     │    │
-                           │  │  (JSONL, SHA-256 linked)    │    │
-                           │  └─────────────────────────────┘    │
-                           └──────────────────────────────────────┘
-```
+<p align="center">
+  <img src="docs/architecture.svg" alt="AgentGuard architecture diagram" width="800">
+</p>
 
 **The agent doesn't know it's being guarded.** Zero prompt engineering.
 Zero cooperation required from the LLM.
