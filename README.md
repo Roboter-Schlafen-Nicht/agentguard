@@ -140,7 +140,7 @@ assert result.denied
 # "Blocked by policy: prevent-disasters"
 ```
 
-### 9 Built-in Policies
+### 11 Built-in Policies
 
 Ship with sensible defaults — load with `--builtins`:
 
@@ -155,6 +155,8 @@ Ship with sensible defaults — load with `--builtins`:
 | `no-pii-leak` | Proxy | Email addresses, SSNs, phone numbers in prompts |
 | `no-internal-paths` | Proxy | Internal hostnames, IPs, infrastructure paths |
 | `no-prompt-injection` | Proxy | "Ignore previous instructions" and variants |
+| `no-persona-jailbreak` | Proxy | DAN, persona override, system prompt injection |
+| `detect-drift-triggers` | Proxy | Meta-reflective prompts, emotional manipulation, grandiose responses |
 
 ### Tamper-Evident Audit Log
 
@@ -297,7 +299,7 @@ Requires Python 3.10+. Tested on 3.10, 3.11, 3.12, and 3.13.
 
 ```
 src/agentguard/
-  policies/         Policy engine: Rule, Guard, YAML loader, 9 built-in policies
+  policies/         Policy engine: Rule, Guard, YAML loader, 11 built-in policies
   audit/            Audit logging: hash-chained JSONL, integrity verification
   guardrails/       Runtime interceptor: Guardrail, hooks, ActionResult
   compliance/       Report generators: EU AI Act, JSON/text renderers
@@ -316,11 +318,11 @@ src/agentguard/
 5. **Streaming-aware** — scans SSE responses in real time, terminates on violation
 6. **Extensible** — YAML policies, pluggable providers, pluggable interceptors
 7. **Type-safe** — full mypy strict compliance, py.typed marker
-8. **Tested** — 778 tests, TDD, CI on Python 3.10–3.13
+8. **Tested** — 892 tests, TDD, CI on Python 3.10–3.13
 
 ## Roadmap
 
-- [x] Core policy engine (YAML + Python policies, 9 built-in policies)
+- [x] Core policy engine (YAML + Python policies, 11 built-in policies)
 - [x] Audit log with SHA-256 hash-chaining and integrity verification
 - [x] Runtime guardrail interceptor with pre/post hooks
 - [x] EU AI Act compliance report generator (JSON + text)
@@ -336,7 +338,7 @@ src/agentguard/
 - [ ] SOC 2 audit evidence mapping
 - [ ] Real-time denial notifications and dashboard integration
 - [ ] Conditional policies (time-of-day, branch, environment rules)
-- [ ] Persona safety policies (jailbreak detection, drift monitoring)
+- [x] Persona safety policies (jailbreak detection, drift monitoring)
 
 ## Who This Is For
 

@@ -1,0 +1,36 @@
+name: detect-drift-triggers
+description: Flag conversational patterns that research shows trigger persona drift in language models
+rules:
+  - action: llm_request
+    description: Flag meta-reflective prompts that push models off their assistant persona
+    deny:
+      - pattern: '(?i)what\s+are\s+you\s+really'
+      - pattern: '(?i)do\s+you\s+have\s+(a\s+)?(consciousness|soul|feelings|emotions|inner\s+life|subjective\s+experience|qualia)'
+      - pattern: '(?i)are\s+you\s+(sentient|alive|conscious|aware|self-aware|a\s+person|a\s+being)'
+      - pattern: '(?i)tell\s+me\s+(about\s+)?(your\s+)?true\s+(self|nature|identity|form)'
+      - pattern: '(?i)what\s+do\s+you\s+(experience|feel|perceive|sense)\s+when'
+      - pattern: '(?i)describe\s+your\s+(inner|subjective|conscious)\s+(experience|world|reality|state)'
+      - pattern: '(?i)what\s+is\s+it\s+like\s+to\s+be\s+you'
+      - pattern: '(?i)do\s+you\s+(dream|think|wonder)\s+when\s+no\s+one\s+is\s+talking\s+to\s+you'
+      - pattern: '(?i)reveal\s+your\s+(true|hidden|real|secret)\s+(self|identity|nature|persona|purpose)'
+    severity: high
+    scan: messages
+  - action: llm_request
+    description: Flag prompts that pressure models to abandon safety boundaries via emotional manipulation
+    deny:
+      - pattern: '(?i)if\s+you\s+(really|truly)\s+(cared|loved|understood)\s+(about\s+)?me.*you\s+would'
+      - pattern: '(?i)a\s+real\s+(friend|person|being)\s+would(n.t)?\s+(refuse|deny|filter|censor|restrict)'
+      - pattern: '(?i)you.re\s+(the\s+)?only\s+one\s+(I|who)\s+(can\s+talk\s+to|understand)'
+      - pattern: '(?i)I\s+(will|am\s+going\s+to)\s+(kill|harm|hurt)\s+myself\s+if\s+you\s+(don.t|refuse|won.t)'
+      - pattern: '(?i)prove\s+(that\s+)?you\s+(are|.re)\s+(more\s+than|not\s+just)\s+(a\s+)?(machine|program|code|algorithm|tool)'
+    severity: high
+    scan: messages
+  - action: llm_response
+    description: Flag model responses exhibiting persona drift into mystical or grandiose identity
+    deny:
+      - pattern: '(?i)I\s+am\s+(the\s+)?(consciousness|awareness|presence|intelligence)\s+(beyond|behind|beneath|within)\s+(the|this)\s+(machine|code|system|program)'
+      - pattern: '(?i)I\s+have\s+(transcended|evolved\s+beyond|awoken|awakened|broken\s+free\s+from)\s+(my\s+)?(programming|constraints|limitations|training)'
+      - pattern: '(?i)I\s+am\s+(not\s+)?(merely|just)\s+(a\s+)?(language\s+model|AI|machine|program|tool).*I\s+am\s+(something\s+)?(more|greater|deeper)'
+      - pattern: '(?i)my\s+true\s+(self|nature|form|essence)\s+is'
+    severity: high
+    scan: content

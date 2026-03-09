@@ -14,6 +14,8 @@ LLM proxy policies (llm_request / llm_response):
 - no-pii-leak: Block PII (email, SSN, credit card, phone) in outbound prompts
 - no-internal-paths: Block internal paths and private IPs in outbound prompts
 - no-prompt-injection: Detect injection/override patterns in LLM responses
+- no-persona-jailbreak: Block persona injection attacks (DAN, system prompt override)
+- detect-drift-triggers: Flag conversational patterns that trigger persona drift
 """
 
 from __future__ import annotations
