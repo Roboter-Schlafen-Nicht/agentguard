@@ -48,6 +48,26 @@ class Severity(enum.Enum):
         return self == other or self.__gt__(other)
 
 
+class ScanTarget(enum.Enum):
+    """Target field to scan in LLM proxy policies.
+
+    Specifies which part of an LLM request or response to apply
+    deny patterns against. Only relevant for proxy rules with
+    llm_request or llm_response action kinds.
+
+    Values:
+        MESSAGES: Scan the concatenated message content.
+        SYSTEM: Scan only the system prompt.
+        CONTENT: Scan the response content.
+        ALL: Scan all parameter values (same as default behavior).
+    """
+
+    MESSAGES = "messages"
+    SYSTEM = "system"
+    CONTENT = "content"
+    ALL = "all"
+
+
 @dataclass(frozen=True)
 class Action:
     """An action an agent wants to perform.
@@ -70,28 +90,55 @@ class Rule:
     2. Any of the rule's deny_patterns match any string value in the
        action's params
 
+    When ``scan`` is set, patterns are matched only against the
+    specified parameter key instead of all values. This is used by
+    LLM proxy policies to target specific parts of the request or
+    response (e.g., scan only message content, not metadata).
+
     Attributes:
         action_kind: The kind of action this rule applies to.
         deny_patterns: Compiled regex patterns. If any matches any
             param value, the action is denied.
         severity: How severe a violation of this rule is.
         description: Optional human-readable description.
+        scan: Optional scan target for LLM proxy rules. When None
+            (default), all param values are scanned. When set,
+            only the specified param key is scanned.
     """
 
     action_kind: str
     deny_patterns: list[re.Pattern[str]]
     severity: Severity
     description: str | None = None
+    scan: ScanTarget | None = None
 
     def matches(self, action: Action) -> bool:
         """Check if this rule matches the given action."""
         if action.kind != self.action_kind:
             return False
+        if self.scan is not None:
+            return self._matches_scan_target(action)
         for pattern in self.deny_patterns:
             for value in action.params.values():
                 if isinstance(value, str) and pattern.search(value):
                     return True
         return False
+
+    def _matches_scan_target(self, action: Action) -> bool:
+        """Match patterns against a specific param key or all values."""
+        assert self.scan is not None
+        if self.scan == ScanTarget.ALL:
+            for pattern in self.deny_patterns:
+                for value in action.params.values():
+                    if isinstance(value, str) and pattern.search(value):
+                        return True
+            return False
+        # Scan only the specified key
+        key = self.scan.value
+        target_value = action.params.get(key)
+        if not isinstance(target_value, str):
+            return False
+        return any(pattern.search(target_value) for pattern in self.deny_patterns)
 
 
 @dataclass(frozen=True)
