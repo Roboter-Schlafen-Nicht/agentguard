@@ -1,0 +1,21 @@
+name: no-internal-paths
+description: Block internal filesystem paths and private IP addresses in messages sent to LLMs
+rules:
+  - action: llm_request
+    description: Block Unix system paths in outbound messages
+    deny:
+      - pattern: '(?:/(?:home|root|etc|var|tmp|opt|usr|mnt|srv)/)\S+'
+    severity: high
+    scan: messages
+  - action: llm_request
+    description: Block Windows system paths in outbound messages
+    deny:
+      - pattern: '[A-Z]:\\(?:Users|Windows|Program\s+Files)\\\S+'
+    severity: high
+    scan: messages
+  - action: llm_request
+    description: Block private/internal IP addresses in outbound messages
+    deny:
+      - pattern: '\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'
+    severity: high
+    scan: messages

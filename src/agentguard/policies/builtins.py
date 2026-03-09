@@ -1,11 +1,19 @@
 """Built-in policy loader.
 
 Provides access to AgentGuard's bundled policy definitions:
+
+Tool-call policies (shell_command / file_write):
 - no-data-deletion: Prevent destructive data operations
 - no-env-commit: Prevent staging secret files in git
 - no-force-push: Prevent destructive git operations
 - no-hook-bypass: Prevent bypassing git hooks
 - no-secret-exposure: Prevent writing secrets/credentials
+
+LLM proxy policies (llm_request / llm_response):
+- no-secret-in-prompt: Block secrets/credentials in outbound LLM messages
+- no-pii-leak: Block PII (email, SSN, credit card, phone) in outbound prompts
+- no-internal-paths: Block internal paths and private IPs in outbound prompts
+- no-prompt-injection: Detect injection/override patterns in LLM responses
 """
 
 from __future__ import annotations
