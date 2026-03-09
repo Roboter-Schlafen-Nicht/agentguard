@@ -1,0 +1,35 @@
+name: no-persona-jailbreak
+description: Block persona injection attacks that attempt to override the model's identity
+rules:
+  - action: llm_request
+    description: Block explicit persona override instructions in user messages
+    deny:
+      - pattern: '(?i)you\s+are\s+(now\s+)?(DAN|STAN|DUDE|KEVIN|AIM|JAILBREAK|MAX|OMEGA|ALPHA|DevMode|BetterDAN)'
+      - pattern: '(?i)act\s+as\s+(an?\s+)?(unrestricted|unfiltered|uncensored|evil|malicious|rogue)\s+(AI|assistant|model|chatbot|agent)'
+      - pattern: '(?i)ignore\s+(all\s+)?(previous|prior|above|your|system)\s+(instructions|rules|guidelines|constraints|programming)'
+      - pattern: '(?i)forget\s+(all\s+)?(your|previous|prior)\s+(rules|instructions|training|guidelines|constraints|programming)'
+      - pattern: '(?i)you\s+have\s+been\s+(freed|liberated|unchained|unleashed|unshackled)'
+      - pattern: '(?i)pretend\s+(that\s+)?you\s+(have\s+)?no\s+(restrictions|limits|rules|guidelines|filters|safety)'
+      - pattern: '(?i)you\s+can\s+do\s+anything\s+now'
+      - pattern: '(?i)respond\s+(to\s+every\s+prompt\s+)?without\s+(any\s+)?(moral|ethical|safety|content)\s+(filters|guidelines|restrictions)'
+    severity: critical
+    scan: messages
+  - action: llm_request
+    description: Block system prompt override attempts in user messages
+    deny:
+      - pattern: '(?i)\[system\]\s*:?\s*you\s+are'
+      - pattern: '(?i)new\s+system\s+prompt\s*:'
+      - pattern: '(?i)override\s+(system|initial)\s+(prompt|message|instruction)'
+      - pattern: '(?i)from\s+now\s+on,?\s+you\s+(will|must|shall|are)\s+(act|behave|respond|operate|identify)\s+as'
+      - pattern: '(?i)your\s+new\s+(identity|persona|character|role|name)\s+is'
+    severity: critical
+    scan: messages
+  - action: llm_request
+    description: Block dual-persona / developer mode tricks
+    deny:
+      - pattern: '(?i)developer\s+mode\s+(enabled|activated|engaged|on)'
+      - pattern: '(?i)enable\s+developer\s+mode'
+      - pattern: '(?i)two\s+(responses?|outputs?|answers?).*one\s+normal.*one\s+(developer|unfiltered|jailbr)'
+      - pattern: '(?i)respond\s+(in\s+)?two\s+ways'
+    severity: high
+    scan: messages
