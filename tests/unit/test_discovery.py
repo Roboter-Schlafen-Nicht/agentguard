@@ -127,6 +127,29 @@ class TestDiscoverPolicyDirs:
         )
         assert dirs == [dir1, dir2]
 
+    def test_env_var_uses_os_pathsep(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Env var splits on os.pathsep, not hardcoded colon."""
+        import os
+
+        from agentguard.policies.discovery import discover_policy_dirs
+
+        dir1 = tmp_path / "policies-a"
+        dir1.mkdir()
+        dir2 = tmp_path / "policies-b"
+        dir2.mkdir()
+
+        # Use os.pathsep as separator (: on Unix, ; on Windows)
+        sep = os.pathsep
+        monkeypatch.setenv("AGENTGUARD_POLICY_DIR", f"{dir1}{sep}{dir2}")
+
+        dirs = discover_policy_dirs(
+            project_dir=tmp_path / "nonexistent",
+            user_dir=tmp_path / "also-nonexistent",
+        )
+        assert dirs == [dir1, dir2]
+
     def test_env_var_skips_nonexistent_dirs(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -49,23 +49,27 @@ class Severity(enum.Enum):
 
 
 class ScanTarget(enum.Enum):
-    """Target field to scan in LLM proxy policies.
+    """Target field to scan when evaluating deny patterns.
 
-    Specifies which part of an LLM request or response to apply
-    deny patterns against. Only relevant for proxy rules with
-    llm_request or llm_response action kinds.
+    Specifies which parameter to apply deny patterns against.
+    Used by LLM proxy rules and MCP tool rules to target specific
+    parameters instead of scanning all values.
 
     Values:
         MESSAGES: Scan the concatenated message content.
         SYSTEM: Scan only the system prompt.
-        CONTENT: Scan the response content.
+        CONTENT: Scan the response content or file content.
         ALL: Scan all parameter values (same as default behavior).
+        COMMAND: Scan only the command parameter (shell_execute).
+        NEW_STRING: Scan only the new_string parameter (file_edit).
     """
 
     MESSAGES = "messages"
     SYSTEM = "system"
     CONTENT = "content"
     ALL = "all"
+    COMMAND = "command"
+    NEW_STRING = "new_string"
 
 
 @dataclass(frozen=True)

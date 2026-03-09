@@ -360,3 +360,31 @@ class TestLoadPolicyScanField:
         assert len(policy.rules) == 2
         assert policy.rules[0].scan is None
         assert policy.rules[1].scan == ScanTarget.MESSAGES
+
+    def test_rule_with_scan_command(self) -> None:
+        """scan: command is valid for shell_execute rules."""
+        yaml_str = textwrap.dedent("""\
+            name: shell-scan-command
+            rules:
+              - action: shell_execute
+                scan: command
+                deny:
+                  - pattern: "rm -rf"
+                severity: critical
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan == ScanTarget.COMMAND
+
+    def test_rule_with_scan_new_string(self) -> None:
+        """scan: new_string is valid for file_edit rules."""
+        yaml_str = textwrap.dedent("""\
+            name: edit-scan-new-string
+            rules:
+              - action: file_edit
+                scan: new_string
+                deny:
+                  - pattern: "/mnt/f/work/"
+                severity: high
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan == ScanTarget.NEW_STRING

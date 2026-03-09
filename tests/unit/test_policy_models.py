@@ -288,16 +288,152 @@ class TestScanTarget:
         assert ScanTarget.SYSTEM.value == "system"
         assert ScanTarget.CONTENT.value == "content"
         assert ScanTarget.ALL.value == "all"
+        assert ScanTarget.COMMAND.value == "command"
+        assert ScanTarget.NEW_STRING.value == "new_string"
 
     def test_scan_target_from_string(self) -> None:
         assert ScanTarget("messages") == ScanTarget.MESSAGES
         assert ScanTarget("system") == ScanTarget.SYSTEM
         assert ScanTarget("content") == ScanTarget.CONTENT
         assert ScanTarget("all") == ScanTarget.ALL
+        assert ScanTarget("command") == ScanTarget.COMMAND
+        assert ScanTarget("new_string") == ScanTarget.NEW_STRING
 
     def test_invalid_scan_target_raises(self) -> None:
         with pytest.raises(ValueError):
             ScanTarget("invalid")
+
+
+class TestScanTargetFileEdit:
+    """Test scan=new_string for file_edit policies."""
+
+    def test_scan_new_string_matches_only_new_string_param(self) -> None:
+        """scan=NEW_STRING should only scan the new_string param."""
+        rule = Rule(
+            action_kind="file_edit",
+            deny_patterns=[re.compile(r"/mnt/f/work/")],
+            severity=Severity.HIGH,
+            scan=ScanTarget.NEW_STRING,
+        )
+        # new_string param contains internal path — should match
+        action_hit = Action(
+            kind="file_edit",
+            params={
+                "path": "/mnt/f/work/project/file.txt",
+                "old_string": "old content",
+                "new_string": "path is /mnt/f/work/project/foo",
+            },
+        )
+        assert rule.matches(action_hit)
+
+    def test_scan_new_string_skips_path_and_old_string(self) -> None:
+        """scan=NEW_STRING should NOT match patterns in path or old_string."""
+        rule = Rule(
+            action_kind="file_edit",
+            deny_patterns=[re.compile(r"/mnt/f/work/")],
+            severity=Severity.HIGH,
+            scan=ScanTarget.NEW_STRING,
+        )
+        # Pattern only in path param, not new_string — should NOT match
+        action_miss = Action(
+            kind="file_edit",
+            params={
+                "path": "/mnt/f/work/project/file.txt",
+                "old_string": "old content",
+                "new_string": "safe replacement content",
+            },
+        )
+        assert not rule.matches(action_miss)
+
+    def test_scan_new_string_missing_param(self) -> None:
+        """If new_string param is absent, rule should not match."""
+        rule = Rule(
+            action_kind="file_edit",
+            deny_patterns=[re.compile(r".*")],
+            severity=Severity.LOW,
+            scan=ScanTarget.NEW_STRING,
+        )
+        action = Action(
+            kind="file_edit",
+            params={"path": "/some/file.txt"},
+        )
+        assert not rule.matches(action)
+
+
+class TestScanTargetCommand:
+    """Test scan=command for shell_execute policies."""
+
+    def test_scan_command_matches_command_param(self) -> None:
+        """scan=COMMAND should only scan the command param."""
+        rule = Rule(
+            action_kind="shell_execute",
+            deny_patterns=[re.compile(r"rm\s+-rf")],
+            severity=Severity.CRITICAL,
+            scan=ScanTarget.COMMAND,
+        )
+        action = Action(
+            kind="shell_execute",
+            params={"command": "rm -rf /tmp/foo"},
+        )
+        assert rule.matches(action)
+
+    def test_scan_command_skips_other_params(self) -> None:
+        """scan=COMMAND should NOT match patterns in other params."""
+        rule = Rule(
+            action_kind="shell_execute",
+            deny_patterns=[re.compile(r"rm\s+-rf")],
+            severity=Severity.CRITICAL,
+            scan=ScanTarget.COMMAND,
+        )
+        action = Action(
+            kind="shell_execute",
+            params={
+                "command": "echo hello",
+                "cwd": "rm -rf /tmp",
+            },
+        )
+        assert not rule.matches(action)
+
+
+class TestScanContentFileWrite:
+    """Test scan=content for file_write policies (the RSN fix)."""
+
+    def test_scan_content_skips_path_param(self) -> None:
+        """scan=CONTENT on file_write should NOT match the path param."""
+        rule = Rule(
+            action_kind="file_write",
+            deny_patterns=[re.compile(r"/mnt/f/work/")],
+            severity=Severity.HIGH,
+            scan=ScanTarget.CONTENT,
+        )
+        # Pattern only in path, not in content — should NOT match
+        action = Action(
+            kind="file_write",
+            params={
+                "path": "/mnt/f/work/project/file.txt",
+                "content": "safe file content here",
+            },
+        )
+        assert not rule.matches(action)
+
+    def test_scan_content_matches_content_param_for_file_write(
+        self,
+    ) -> None:
+        """scan=CONTENT on file_write should match patterns in content."""
+        rule = Rule(
+            action_kind="file_write",
+            deny_patterns=[re.compile(r"/mnt/f/work/")],
+            severity=Severity.HIGH,
+            scan=ScanTarget.CONTENT,
+        )
+        action = Action(
+            kind="file_write",
+            params={
+                "path": "/safe/path/file.txt",
+                "content": "leaked path: /mnt/f/work/secret",
+            },
+        )
+        assert rule.matches(action)
 
 
 # === Decision dataclass ===
