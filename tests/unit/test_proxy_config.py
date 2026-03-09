@@ -108,3 +108,35 @@ class TestProxyConfigAllowedEndpoints:
         cfg2 = ProxyConfig(upstream_base_url="https://api.openai.com")
         cfg1.allowed_endpoints.append("/v1/test")
         assert cfg2.allowed_endpoints == []
+
+
+# ===========================================================================
+# Test: Provider field
+# ===========================================================================
+
+
+class TestProxyConfigProvider:
+    """Test provider field on ProxyConfig."""
+
+    def test_provider_defaults_to_none(self) -> None:
+        """Provider should default to None."""
+        cfg = ProxyConfig(upstream_base_url="https://api.openai.com")
+        assert cfg.provider is None
+
+    def test_provider_accepts_string(self) -> None:
+        """Provider can be set to a provider name string."""
+        cfg = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            provider="openai",
+        )
+        assert cfg.provider == "openai"
+
+    def test_provider_included_in_all_fields(self) -> None:
+        """Config with all fields including provider."""
+        cfg = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            provider="openai",
+            scan_responses=True,
+        )
+        assert cfg.provider == "openai"
+        assert cfg.scan_responses is True

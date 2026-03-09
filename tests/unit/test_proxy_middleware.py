@@ -1087,3 +1087,90 @@ class TestStreamingResponseScanning:
             e for e in mw.audit_log.entries if e.action == "llm_response"
         ]
         assert len(response_entries) == 0
+
+
+# ===========================================================================
+# Test: Provider integration in middleware
+# ===========================================================================
+
+
+class TestProviderIntegration:
+    """Test that middleware uses provider from config for param extraction."""
+
+    @pytest.mark.anyio
+    async def test_middleware_with_provider_config(self, policy_dir: Path) -> None:
+        """Middleware with provider='openai' should use OpenAI provider."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(policy_dir),
+            provider="openai",
+        )
+        mw = GuardMiddleware(config)
+        assert mw.provider is not None
+        assert mw.provider.name == "openai"
+
+    @pytest.mark.anyio
+    async def test_middleware_without_provider_config(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Middleware without provider should use default (None → fallback)."""
+        mw = GuardMiddleware(base_config)
+        # When provider is None in config, middleware should still work
+        request = _make_request(body=_openai_request_body())
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            response = await mw.handle_request(request)
+
+        assert response.status_code == 200
+
+    @pytest.mark.anyio
+    async def test_provider_used_for_request_scanning(self, policy_dir: Path) -> None:
+        """Provider should be used for extracting request params."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(policy_dir),
+            provider="openai",
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(
+            body=_openai_request_body(
+                messages=[
+                    {"role": "user", "content": "My password: secret123"},
+                ]
+            )
+        )
+
+        response = await mw.handle_request(request)
+        # Should be denied by the policy
+        assert response.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_provider_used_for_response_scanning(
+        self, response_policy_dir: Path
+    ) -> None:
+        """Provider should be used for extracting response params."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(response_policy_dir),
+            scan_responses=True,
+            provider="openai",
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body())
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps(
+            {"choices": [{"message": {"content": "HARMFUL_CONTENT here"}}]}
+        ).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            response = await mw.handle_request(request)
+
+        assert response.status_code == 403

@@ -31,6 +31,10 @@ class ProxyConfig:
         allowed_endpoints: URL path patterns that are proxied.
             Requests to other paths get 404. If empty, all paths
             are proxied.
+        provider: Name of the LLM API provider adapter to use
+            for parsing request/response bodies (e.g. ``"openai"``).
+            If None, defaults to ``"openai"`` (most LLM APIs use
+            the OpenAI-compatible format).
     """
 
     upstream_base_url: str
@@ -44,6 +48,7 @@ class ProxyConfig:
     scan_responses: bool = False
     timeout: float = 120.0
     allowed_endpoints: list[str] = field(default_factory=list)
+    provider: str | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration."""
