@@ -30,6 +30,11 @@ try:
 except ImportError:
     create_server = None  # type: ignore[assignment]
 
+try:
+    from agentguard.proxy.app import create_app as create_proxy_app
+except ImportError:
+    create_proxy_app = None  # type: ignore[assignment]
+
 
 class _Parsers:
     """Container for parser references needed for subcommand help."""
@@ -200,6 +205,60 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     report_parser.add_argument(
         "--output", help="Write report to this file instead of stdout."
+    )
+
+    # --- proxy ---
+    proxy_parser = subparsers.add_parser(
+        "proxy", help="Start the LLM API proxy server."
+    )
+    proxy_parser.add_argument(
+        "upstream",
+        help="Base URL of the upstream LLM API (e.g. https://api.openai.com).",
+    )
+    proxy_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1).",
+    )
+    proxy_parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to bind to (default: 8080).",
+    )
+    proxy_parser.add_argument(
+        "--builtins",
+        action="store_true",
+        help="Load all built-in policies.",
+    )
+    proxy_parser.add_argument(
+        "--auto-discover",
+        action="store_true",
+        help="Auto-discover policies from standard locations.",
+    )
+    proxy_parser.add_argument(
+        "--policy-dir",
+        help="Directory containing policy YAML files.",
+    )
+    proxy_parser.add_argument(
+        "--audit-dir",
+        help="Directory where audit logs are saved.",
+    )
+    proxy_parser.add_argument(
+        "--actor",
+        default="llm-proxy",
+        help="Actor name for audit entries (default: llm-proxy).",
+    )
+    proxy_parser.add_argument(
+        "--scan-responses",
+        action="store_true",
+        help="Also scan upstream responses against policies.",
+    )
+    proxy_parser.add_argument(
+        "--timeout",
+        type=float,
+        default=120.0,
+        help="Timeout in seconds for upstream requests (default: 120).",
     )
 
     return parser
@@ -499,6 +558,57 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_proxy(args: argparse.Namespace) -> int:
+    """Start the LLM API proxy server."""
+    if create_proxy_app is None:
+        print(
+            "Error: Proxy dependencies not installed. "
+            "Install with: pip install agentguard[proxy]",
+            file=sys.stderr,
+        )
+        return 1
+
+    policy_dir = getattr(args, "policy_dir", None)
+    if policy_dir is not None and not Path(policy_dir).is_dir():
+        print(
+            f"Error: Policy directory not found: {policy_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        from agentguard.proxy.config import ProxyConfig
+
+        config = ProxyConfig(
+            upstream_base_url=args.upstream,
+            host=args.host,
+            port=args.port,
+            policy_dir=policy_dir,
+            audit_dir=getattr(args, "audit_dir", None),
+            actor=args.actor,
+            load_builtins=args.builtins,
+            auto_discover=args.auto_discover,
+            scan_responses=args.scan_responses,
+            timeout=args.timeout,
+        )
+        app = create_proxy_app(config)
+
+        import uvicorn
+
+        uvicorn.run(app, host=config.host, port=config.port)
+    except ImportError:
+        print(
+            "Error: Proxy dependencies not installed. "
+            "Install with: pip install agentguard[proxy]",
+            file=sys.stderr,
+        )
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the AgentGuard CLI.
 
@@ -550,6 +660,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "report":
         return _cmd_report(args)
+
+    if args.command == "proxy":
+        return _cmd_proxy(args)
 
     parser.print_help()
     return 1
