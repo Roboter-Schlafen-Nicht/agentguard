@@ -15,7 +15,7 @@ from typing import Any
 
 import yaml
 
-from agentguard.policies.models import Policy, Rule, Severity
+from agentguard.policies.models import Policy, Rule, ScanTarget, Severity
 
 
 def load_policy_from_string(yaml_str: str) -> Policy:
@@ -98,12 +98,14 @@ def _parse_rule(data: Any) -> Rule:
 
     severity = _parse_severity(data["severity"])
     patterns = [_parse_pattern(p) for p in data["deny"]]
+    scan = _parse_scan_target(data["scan"]) if "scan" in data else None
 
     return Rule(
         action_kind=data["action"],
         deny_patterns=patterns,
         severity=severity,
         description=data.get("description"),
+        scan=scan,
     )
 
 
@@ -114,6 +116,26 @@ def _parse_severity(value: str) -> Severity:
     except ValueError:
         valid = ", ".join(s.value for s in Severity)
         msg = f"Invalid severity '{value}'. Valid values: {valid}"
+        raise ValueError(msg) from None
+
+
+def _parse_scan_target(value: str) -> ScanTarget:
+    """Parse a scan target string into a ScanTarget enum.
+
+    Args:
+        value: Scan target string (e.g., "messages", "system", "content", "all").
+
+    Returns:
+        The corresponding ScanTarget enum value.
+
+    Raises:
+        ValueError: If the value is not a valid scan target.
+    """
+    try:
+        return ScanTarget(value)
+    except ValueError:
+        valid = ", ".join(s.value for s in ScanTarget)
+        msg = f"Invalid scan target '{value}'. Valid values: {valid}"
         raise ValueError(msg) from None
 
 

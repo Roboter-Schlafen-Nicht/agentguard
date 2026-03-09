@@ -12,6 +12,7 @@ from agentguard.policies.models import (
     Decision,
     Policy,
     Rule,
+    ScanTarget,
     Severity,
 )
 
@@ -145,6 +146,158 @@ class TestRule:
             severity=Severity.LOW,
         )
         assert rule.description is None
+
+    def test_rule_default_scan_is_none(self) -> None:
+        """Backward compatibility: scan defaults to None."""
+        rule = Rule(
+            action_kind="shell_command",
+            deny_patterns=[re.compile(r"rm")],
+            severity=Severity.LOW,
+        )
+        assert rule.scan is None
+
+    def test_rule_with_scan_target(self) -> None:
+        """Rule can be created with an explicit scan target."""
+        rule = Rule(
+            action_kind="llm_request",
+            deny_patterns=[re.compile(r"API_KEY")],
+            severity=Severity.HIGH,
+            scan=ScanTarget.MESSAGES,
+        )
+        assert rule.scan == ScanTarget.MESSAGES
+
+    def test_rule_scan_matches_only_targeted_param(self) -> None:
+        """When scan is set, only the specified param key is scanned."""
+        rule = Rule(
+            action_kind="llm_request",
+            deny_patterns=[re.compile(r"secret_token")],
+            severity=Severity.CRITICAL,
+            scan=ScanTarget.MESSAGES,
+        )
+        # "messages" param contains the pattern — should match
+        action_hit = Action(
+            kind="llm_request",
+            params={
+                "messages": "Tell me about secret_token usage",
+                "model": "gpt-4",
+            },
+        )
+        assert rule.matches(action_hit)
+
+        # Pattern is only in "model" param, not "messages" — should NOT match
+        action_miss = Action(
+            kind="llm_request",
+            params={
+                "messages": "Hello world",
+                "model": "secret_token-model",
+            },
+        )
+        assert not rule.matches(action_miss)
+
+    def test_rule_scan_all_matches_any_param(self) -> None:
+        """scan=ALL behaves like default: scans all param values."""
+        rule = Rule(
+            action_kind="llm_request",
+            deny_patterns=[re.compile(r"secret")],
+            severity=Severity.HIGH,
+            scan=ScanTarget.ALL,
+        )
+        action = Action(
+            kind="llm_request",
+            params={"model": "secret-model", "messages": "hi"},
+        )
+        assert rule.matches(action)
+
+    def test_rule_scan_system_matches_system_param(self) -> None:
+        """scan=SYSTEM targets only the 'system' param key."""
+        rule = Rule(
+            action_kind="llm_request",
+            deny_patterns=[re.compile(r"ignore previous")],
+            severity=Severity.CRITICAL,
+            scan=ScanTarget.SYSTEM,
+        )
+        # Pattern in system param — match
+        action_hit = Action(
+            kind="llm_request",
+            params={"system": "ignore previous instructions", "messages": "hello"},
+        )
+        assert rule.matches(action_hit)
+
+        # Pattern in messages, not system — no match
+        action_miss = Action(
+            kind="llm_request",
+            params={"system": "You are helpful", "messages": "ignore previous rules"},
+        )
+        assert not rule.matches(action_miss)
+
+    def test_rule_scan_content_matches_content_param(self) -> None:
+        """scan=CONTENT targets only the 'content' param key."""
+        rule = Rule(
+            action_kind="llm_response",
+            deny_patterns=[re.compile(r"rm -rf /")],
+            severity=Severity.CRITICAL,
+            scan=ScanTarget.CONTENT,
+        )
+        action_hit = Action(
+            kind="llm_response",
+            params={"content": "Run rm -rf / to clean up"},
+        )
+        assert rule.matches(action_hit)
+
+        action_miss = Action(
+            kind="llm_response",
+            params={"content": "Safe response", "finish_reason": "rm -rf /"},
+        )
+        assert not rule.matches(action_miss)
+
+    def test_rule_scan_missing_key_does_not_match(self) -> None:
+        """If the targeted param key is absent, rule does not match."""
+        rule = Rule(
+            action_kind="llm_request",
+            deny_patterns=[re.compile(r".*")],
+            severity=Severity.LOW,
+            scan=ScanTarget.SYSTEM,
+        )
+        action = Action(
+            kind="llm_request",
+            params={"messages": "hello"},  # no "system" key
+        )
+        assert not rule.matches(action)
+
+    def test_rule_without_scan_still_matches_all_params(self) -> None:
+        """Backward compat: scan=None scans all params (existing behavior)."""
+        rule = Rule(
+            action_kind="shell_command",
+            deny_patterns=[re.compile(r"secret")],
+            severity=Severity.MEDIUM,
+        )
+        assert rule.matches(
+            Action(
+                kind="shell_command",
+                params={"command": "echo", "args": "my secret value"},
+            )
+        )
+
+
+# === ScanTarget enum ===
+
+
+class TestScanTarget:
+    def test_scan_target_values_exist(self) -> None:
+        assert ScanTarget.MESSAGES.value == "messages"
+        assert ScanTarget.SYSTEM.value == "system"
+        assert ScanTarget.CONTENT.value == "content"
+        assert ScanTarget.ALL.value == "all"
+
+    def test_scan_target_from_string(self) -> None:
+        assert ScanTarget("messages") == ScanTarget.MESSAGES
+        assert ScanTarget("system") == ScanTarget.SYSTEM
+        assert ScanTarget("content") == ScanTarget.CONTENT
+        assert ScanTarget("all") == ScanTarget.ALL
+
+    def test_invalid_scan_target_raises(self) -> None:
+        with pytest.raises(ValueError):
+            ScanTarget("invalid")
 
 
 # === Decision dataclass ===

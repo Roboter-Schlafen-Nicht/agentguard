@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from agentguard.policies.loader import load_policy_from_string, load_policy_from_yaml
-from agentguard.policies.models import Policy, Severity
+from agentguard.policies.models import Policy, ScanTarget, Severity
 
 
 class TestLoadPolicyFromString:
@@ -229,3 +229,134 @@ class TestLoadPolicyFromFile:
         )
         policy = load_policy_from_yaml(str(policy_file))
         assert policy.name == "str-path-policy"
+
+
+# === Scan field parsing ===
+
+
+class TestLoadPolicyScanField:
+    def test_rule_without_scan_has_none(self) -> None:
+        """Backward compat: rules without scan field get scan=None."""
+        yaml_str = textwrap.dedent("""\
+            name: no-scan
+            rules:
+              - action: shell_command
+                deny:
+                  - pattern: "rm"
+                severity: low
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan is None
+
+    def test_rule_with_scan_messages(self) -> None:
+        yaml_str = textwrap.dedent("""\
+            name: llm-scan
+            rules:
+              - action: llm_request
+                scan: messages
+                deny:
+                  - pattern: "API_KEY"
+                severity: high
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan == ScanTarget.MESSAGES
+
+    def test_rule_with_scan_system(self) -> None:
+        yaml_str = textwrap.dedent("""\
+            name: llm-scan-system
+            rules:
+              - action: llm_request
+                scan: system
+                deny:
+                  - pattern: "ignore previous"
+                severity: critical
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan == ScanTarget.SYSTEM
+
+    def test_rule_with_scan_content(self) -> None:
+        yaml_str = textwrap.dedent("""\
+            name: llm-scan-content
+            rules:
+              - action: llm_response
+                scan: content
+                deny:
+                  - pattern: "rm -rf"
+                severity: critical
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan == ScanTarget.CONTENT
+
+    def test_rule_with_scan_all(self) -> None:
+        yaml_str = textwrap.dedent("""\
+            name: llm-scan-all
+            rules:
+              - action: llm_request
+                scan: all
+                deny:
+                  - pattern: "secret"
+                severity: high
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].scan == ScanTarget.ALL
+
+    def test_invalid_scan_value_raises(self) -> None:
+        yaml_str = textwrap.dedent("""\
+            name: bad-scan
+            rules:
+              - action: llm_request
+                scan: invalid_target
+                deny:
+                  - pattern: "test"
+                severity: low
+        """)
+        with pytest.raises(ValueError, match="scan target"):
+            load_policy_from_string(yaml_str)
+
+    def test_llm_request_action_kind_accepted(self) -> None:
+        """llm_request is a valid action kind (no special validation)."""
+        yaml_str = textwrap.dedent("""\
+            name: llm-policy
+            rules:
+              - action: llm_request
+                deny:
+                  - pattern: "API_KEY"
+                severity: high
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].action_kind == "llm_request"
+
+    def test_llm_response_action_kind_accepted(self) -> None:
+        """llm_response is a valid action kind (no special validation)."""
+        yaml_str = textwrap.dedent("""\
+            name: llm-response-policy
+            rules:
+              - action: llm_response
+                scan: content
+                deny:
+                  - pattern: "ignore previous instructions"
+                severity: critical
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert policy.rules[0].action_kind == "llm_response"
+        assert policy.rules[0].scan == ScanTarget.CONTENT
+
+    def test_mixed_rules_with_and_without_scan(self) -> None:
+        """Policy can mix tool-call rules (no scan) and proxy rules (with scan)."""
+        yaml_str = textwrap.dedent("""\
+            name: mixed-policy
+            rules:
+              - action: shell_command
+                deny:
+                  - pattern: "rm -rf"
+                severity: critical
+              - action: llm_request
+                scan: messages
+                deny:
+                  - pattern: "API_KEY"
+                severity: high
+        """)
+        policy = load_policy_from_string(yaml_str)
+        assert len(policy.rules) == 2
+        assert policy.rules[0].scan is None
+        assert policy.rules[1].scan == ScanTarget.MESSAGES
