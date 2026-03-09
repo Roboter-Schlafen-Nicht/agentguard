@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from agentguard.audit.log import AuditLog
 from agentguard.policies.guard import Guard
+from agentguard.proxy.outbound import estimate_tokens
 
 
 class _StreamContext(NamedTuple):
@@ -119,6 +120,8 @@ class GuardMiddleware:
             # Non-JSON body — pass through without scanning
             params = {}
 
+        message_count, token_est = self._extract_body_stats(body)
+
         if params:
             decision = self.guard.check("llm_request", **params)
             if decision.denied:
@@ -130,6 +133,8 @@ class GuardMiddleware:
                     metadata={
                         "denied_by": decision.denied_by or "",
                         "reason": decision.reason or "",
+                        "message_count": str(message_count),
+                        "token_estimate": str(token_est),
                     },
                 )
                 self._save_audit()
@@ -189,6 +194,8 @@ class GuardMiddleware:
             metadata={
                 "upstream_status": str(upstream_response.status_code),
                 "model": params.get("model", ""),
+                "message_count": str(message_count),
+                "token_estimate": str(token_est),
             },
         )
         self._save_audit()
@@ -252,6 +259,42 @@ class GuardMiddleware:
             headers=response_headers,
             media_type=upstream_response.headers.get("content-type"),
         )
+
+    def _extract_body_stats(self, body: bytes) -> tuple[int, int]:
+        """Extract message count and token estimate from request body.
+
+        Args:
+            body: Raw request body bytes.
+
+        Returns:
+            Tuple of (message_count, token_estimate).
+            Both are 0 if the body is not valid JSON or has no messages.
+        """
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return 0, 0
+
+        if not isinstance(data, dict):
+            return 0, 0
+
+        messages = data.get("messages")
+        if not isinstance(messages, list):
+            return 0, 0
+
+        message_count = len(messages)
+
+        # Concatenate all message content for token estimation
+        content_parts: list[str] = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    content_parts.append(content)
+        all_content = " ".join(content_parts)
+        token_est = estimate_tokens(all_content)
+
+        return message_count, token_est
 
     async def _forward_request(
         self,
