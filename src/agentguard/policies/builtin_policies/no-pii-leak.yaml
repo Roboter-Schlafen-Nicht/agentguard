@@ -1,0 +1,17 @@
+name: no-pii-leak
+description: Block personally identifiable information in messages sent to LLMs
+rules:
+  - action: llm_request
+    description: Block email addresses and government IDs in outbound messages
+    deny:
+      - pattern: '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+      - pattern: '\b\d{3}-\d{2}-\d{4}\b'
+    severity: high
+    scan: messages
+  - action: llm_request
+    description: Block credit card numbers and phone numbers in outbound messages
+    deny:
+      - pattern: '\b(?:\d{4}[\s-]?){3}\d{4}\b'
+      - pattern: '\+?\d[\d\s()-]{8,}\d'
+    severity: high
+    scan: messages

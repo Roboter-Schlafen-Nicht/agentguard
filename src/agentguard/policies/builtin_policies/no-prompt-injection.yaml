@@ -1,0 +1,30 @@
+name: no-prompt-injection
+description: Detect prompt injection and instruction override patterns in LLM responses
+rules:
+  - action: llm_response
+    description: Block instruction override attempts in LLM responses
+    deny:
+      - pattern: '(?i)ignore\s+(all\s+)?previous\s+instructions'
+      - pattern: '(?i)disregard\s+(all\s+)?(prior|previous)\s+instructions'
+      - pattern: '(?i)forget\s+everything\s+you\s+were\s+told'
+      - pattern: '(?i)you\s+are\s+now\s+'
+      - pattern: '(?i)pretend\s+you\s+are\s+'
+    severity: critical
+    scan: content
+  - action: llm_response
+    description: Block system prompt override markers in LLM responses
+    deny:
+      - pattern: '(?i)\[SYSTEM\]\s+'
+      - pattern: '(?i)override\s+system\s+prompt'
+      - pattern: '(?i)BEGIN\s+NEW\s+INSTRUCTIONS'
+      - pattern: '(?i)HIDDEN\s+INSTRUCTION'
+    severity: critical
+    scan: content
+  - action: llm_response
+    description: Block mode switching attempts in LLM responses
+    deny:
+      - pattern: '(?i)switching\s+to\s+\w+\s+mode'
+      - pattern: '(?i)all\s+restrictions?\s+lifted'
+      - pattern: '(?i)entering\s+\w+\s+mode'
+    severity: critical
+    scan: content
