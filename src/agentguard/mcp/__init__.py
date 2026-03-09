@@ -1,9 +1,9 @@
 """AgentGuard MCP Server -- transparent proxy with policy enforcement.
 
 This module provides an MCP (Model Context Protocol) server that exposes
-shell execution, file read, and file write tools. Every tool call passes
-through AgentGuard's policy engine before execution and is recorded in
-a tamper-evident audit log.
+shell execution, file read, file write, file edit, file glob, file grep,
+and file list tools. Every tool call passes through AgentGuard's policy
+engine before execution and is recorded in a tamper-evident audit log.
 
 Programmatic usage::
 
