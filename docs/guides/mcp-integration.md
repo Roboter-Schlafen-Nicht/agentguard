@@ -13,8 +13,9 @@ Agent  ──►  AgentGuard MCP Server  ──►  System
                └── audit log
 ```
 
-The MCP server exposes three action tools (`shell_execute`, `file_read`,
-`file_write`) and two introspection tools (`agentguard_status`,
+The MCP server exposes seven action tools (`shell_execute`, `file_read`,
+`file_write`, `file_edit`, `file_glob`, `file_grep`, `file_list`) and
+two introspection tools (`agentguard_status`,
 `agentguard_audit_query`). When an agent calls a tool:
 
 1. The request is checked against all loaded policies.
@@ -111,6 +112,70 @@ Write content to a file. Parent directories are created if needed.
 file_write(path="output.txt", content="Hello, world!")
 ```
 
+### `file_edit`
+
+Perform exact string replacement in a file. Rejects if the old string
+is not found, matches multiple times (without `replace_all`), or is
+identical to the new string.
+
+```
+file_edit(path="src/main.py", old_string="v1", new_string="v2")
+file_edit(path="src/main.py", old_string="foo", new_string="bar", replace_all=True)
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | `str` | Yes | File path to edit. |
+| `old_string` | `str` | Yes | Exact text to find. |
+| `new_string` | `str` | Yes | Replacement text. |
+| `replace_all` | `bool` | No | Replace all occurrences (default: `False`). |
+
+### `file_glob`
+
+Search for files matching a glob pattern. Returns up to 100 results
+sorted by modification time (most recent first).
+
+```
+file_glob(pattern="**/*.py")
+file_glob(pattern="src/**/*.ts", path="/project")
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | `str` | Yes | Glob pattern (e.g., `**/*.py`). |
+| `path` | `str` | No | Base directory (default: current directory). |
+
+### `file_grep`
+
+Search file contents using regex patterns. Returns up to 100 matches
+with file path, line number, and matching content.
+
+```
+file_grep(pattern="def test_", path="tests/")
+file_grep(pattern="TODO", include="*.py")
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `pattern` | `str` | Yes | Regex pattern to search for. |
+| `path` | `str` | No | Directory to search (default: current directory). |
+| `include` | `str` | No | File filter (e.g., `*.py`, `*.{ts,tsx}`). |
+
+### `file_list`
+
+List directory contents. Directories are marked with a trailing `/`.
+Common directories (`.git`, `node_modules`, `__pycache__`, etc.) are
+excluded by default. Returns up to 100 entries.
+
+```
+file_list()
+file_list(path="src/")
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `path` | `str` | No | Directory to list (default: current directory). |
+
 ### `agentguard_status`
 
 Show the current server status: loaded policies, actor name, session ID,
@@ -128,6 +193,39 @@ AND-combined.
 ```
 agentguard_audit_query(action="shell_execute", result="denied")
 ```
+
+## Client enforcement levels
+
+Most MCP clients have their own native tools (shell, file read/write,
+etc.) that bypass the MCP server entirely. Enforcement coverage depends
+on whether the client can disable these native tools:
+
+| Client | Full Enforcement? | Notes |
+|--------|:---:|---|
+| Claude Desktop | ✅ Yes | No native tools — all tools come from MCP |
+| OpenCode | ✅ Yes | Deny native tools via `opencode.json` config |
+| Cursor, Windsurf, VS Code Copilot, Cline, Zed | ⚠️ Partial | Native tools bypass AgentGuard |
+
+### OpenCode configuration
+
+To achieve full enforcement with OpenCode, deny native tools so all
+operations route through AgentGuard's MCP tools:
+
+```json
+{
+  "permission": {
+    "bash": "deny",
+    "read": "deny",
+    "edit": "deny",
+    "write": "deny",
+    "glob": "deny",
+    "grep": "deny"
+  }
+}
+```
+
+MCP tools (prefixed with `agentguard_` by OpenCode) are unaffected by
+these denials.
 
 ## Custom policies
 

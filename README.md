@@ -29,9 +29,11 @@ That trust is misplaced:
 
 AgentGuard guards AI agents at **two layers**:
 
-1. **MCP Server** — sits between the agent and your OS. Intercepts every
-   `shell_execute`, `file_read`, and `file_write` call. Enforces policies
-   before execution. Works with any MCP client.
+1. **MCP Server** — sits between the agent and your OS. Intercepts
+   `shell_execute`, `file_read`, `file_write`, `file_edit`, `file_glob`,
+   `file_grep`, and `file_list` calls. Enforces policies before
+   execution. Works with any MCP client (see
+   [enforcement levels](#mcp-client-enforcement) below).
 
 2. **LLM API Proxy** — sits between the agent and the LLM API. Scans
    outbound prompts for secrets/PII before they reach the LLM. Scans
@@ -67,11 +69,45 @@ pip install agentguard[mcp]
 }
 ```
 
-Every `shell_execute`, `file_read`, and `file_write` call now passes
-through AgentGuard. Denied actions never execute. Everything is logged.
+Every `shell_execute`, `file_read`, `file_write`, `file_edit`,
+`file_glob`, `file_grep`, and `file_list` call now passes through
+AgentGuard. Denied actions never execute. Everything is logged.
 
-Works with **any MCP client**: Claude Desktop, Cursor, Windsurf,
-VS Code Copilot, OpenCode, Cline, Zed, and custom agents.
+### MCP Client Enforcement
+
+AgentGuard's MCP server provides 7 action tools and 2 sidecar tools.
+Enforcement coverage depends on whether the MCP client has its own
+native tools that bypass the MCP server:
+
+| Client | Native Tools? | Full Enforcement? | Notes |
+|--------|:---:|:---:|---|
+| **Claude Desktop** | No | ✅ Yes | All tools come from MCP — full coverage |
+| **OpenCode** | Yes | ✅ Yes | Deny native tools via config (see below) |
+| **Cursor** | Yes | ⚠️ Partial | Native tools bypass AgentGuard |
+| **Windsurf** | Yes | ⚠️ Partial | Native tools bypass AgentGuard |
+| **VS Code Copilot** | Yes | ⚠️ Partial | Native tools bypass AgentGuard |
+| **Cline** | Yes | ⚠️ Partial | Native tools bypass AgentGuard |
+| **Zed** | Yes | ⚠️ Partial | Native tools bypass AgentGuard |
+
+For clients with native tools that cannot be disabled, AgentGuard still
+enforces policies on all calls that go through the MCP server — but the
+agent may also use native tools that bypass enforcement entirely.
+
+**OpenCode full enforcement:** Add permission denials to your
+`opencode.json` to route all operations through AgentGuard:
+
+```json
+{
+  "permission": {
+    "bash": "deny",
+    "read": "deny",
+    "edit": "deny",
+    "write": "deny",
+    "glob": "deny",
+    "grep": "deny"
+  }
+}
+```
 
 ### LLM API Proxy — guard prompts and responses
 
@@ -106,9 +142,10 @@ provider adapter.
 ### Policy Engine
 
 YAML policies with regex-based deny patterns. Separate action kinds
-for tool calls (`shell_execute`, `file_read`, `file_write`) and LLM
-traffic (`llm_request`, `llm_response`). Optional `scan` field targets
-specific parts of LLM messages (`messages`, `system`, `content`, `all`).
+for tool calls (`shell_execute`, `file_read`, `file_write`, `file_edit`,
+`file_glob`, `file_grep`, `file_list`) and LLM traffic (`llm_request`,
+`llm_response`). Optional `scan` field targets specific parts of LLM
+messages (`messages`, `system`, `content`, `all`).
 
 ```yaml
 # policies/safety.yaml
@@ -264,6 +301,20 @@ session info) and `agentguard_audit_query` (search audit by action,
 result, or actor) — so you can ask the agent "what policies are
 active?" or "show me all denied actions."
 
+### MCP Action Tools
+
+In addition to `shell_execute`, `file_read`, and `file_write`, the
+MCP server provides:
+
+| Tool | Description |
+|------|-------------|
+| `file_edit` | Exact string replacement in files |
+| `file_glob` | Pattern-based file search (mtime-sorted) |
+| `file_grep` | Regex content search with file filter |
+| `file_list` | Directory listing with ignore patterns |
+
+All 7 action tools enforce policies and log to the audit trail.
+
 ## CLI
 
 ```
@@ -318,7 +369,7 @@ src/agentguard/
 5. **Streaming-aware** — scans SSE responses in real time, terminates on violation
 6. **Extensible** — YAML policies, pluggable providers, pluggable interceptors
 7. **Type-safe** — full mypy strict compliance, py.typed marker
-8. **Tested** — 892 tests, TDD, CI on Python 3.10–3.13
+8. **Tested** — 927 tests, TDD, CI on Python 3.10–3.13
 
 ## Roadmap
 
@@ -327,6 +378,7 @@ src/agentguard/
 - [x] Runtime guardrail interceptor with pre/post hooks
 - [x] EU AI Act compliance report generator (JSON + text)
 - [x] MCP server with transparent policy enforcement and sidecar tools
+- [x] Extended MCP tools (file_edit, file_glob, file_grep, file_list)
 - [x] CLI tool (`check`, `audit`, `policies`, `report`, `serve`, `proxy`)
 - [x] LLM API proxy with outbound scanner (secrets, PII, internal paths)
 - [x] Streaming inbound scanner (SSE sliding window, mid-stream termination)
