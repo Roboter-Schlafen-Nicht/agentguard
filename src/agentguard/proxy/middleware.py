@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     from starlette.requests import Request
     from starlette.responses import Response
 
@@ -203,8 +205,63 @@ class GuardMiddleware:
         if is_streaming:
             from starlette.background import BackgroundTask
 
-            # Return streaming response with cleanup task
             response_headers = self._filter_response_headers(upstream_response.headers)
+
+            if self.config.scan_responses:
+                # Use inbound scanner for streaming response scanning
+                from agentguard.proxy.inbound import InboundScanner
+                from agentguard.proxy.streaming import stream_sse_response
+
+                scanner = InboundScanner(self.guard)
+
+                async def _scanning_generator() -> AsyncGenerator[bytes, None]:
+                    async for chunk_bytes, _collected in stream_sse_response(
+                        upstream_response, scanner=scanner
+                    ):
+                        yield chunk_bytes
+
+                    # Stream finished — record audit
+                    result = scanner.finalize()
+                    if result.denied:
+                        self.audit_log.record(
+                            action="llm_response",
+                            actor=self.config.actor,
+                            target=path,
+                            result="denied",
+                            metadata={
+                                "denied_by": result.denied_by or "",
+                                "reason": result.reason or "",
+                                "scanned_length": str(result.scanned_length),
+                                "token_estimate": str(result.token_estimate),
+                            },
+                        )
+                    else:
+                        self.audit_log.record(
+                            action="llm_response",
+                            actor=self.config.actor,
+                            target=path,
+                            result="allowed",
+                            metadata={
+                                "scanned_length": str(result.scanned_length),
+                                "token_estimate": str(result.token_estimate),
+                            },
+                        )
+                    self._save_audit()
+
+                cleanup = BackgroundTask(
+                    self._cleanup_stream, stream_ctx.client, stream_ctx.response
+                )
+                return StreamingResponse(
+                    _scanning_generator(),
+                    status_code=upstream_response.status_code,
+                    headers=response_headers,
+                    media_type=upstream_response.headers.get(
+                        "content-type", "text/event-stream"
+                    ),
+                    background=cleanup,
+                )
+
+            # No response scanning — forward raw bytes
             cleanup = BackgroundTask(
                 self._cleanup_stream, stream_ctx.client, stream_ctx.response
             )

@@ -6,6 +6,7 @@ import json
 
 import pytest
 
+from agentguard.policies.guard import Guard
 from agentguard.proxy.streaming import stream_sse_response
 
 
@@ -283,3 +284,182 @@ class TestStreamSseResponseCollect:
 
         _last_chunk, collected = chunks[-1]
         assert collected == "AB"
+
+
+# ===========================================================================
+# Tests: stream_sse_response with InboundScanner
+# ===========================================================================
+
+
+class TestStreamSseResponseWithScanner:
+    """Test SSE streaming with an InboundScanner for response scanning."""
+
+    @staticmethod
+    def _make_scanner_guard(pattern: str) -> Guard:
+        """Create a Guard with a single llm_response deny rule."""
+        import re
+
+        from agentguard.policies.models import Policy, Rule
+
+        rule = Rule(
+            action_kind="llm_response",
+            deny_patterns=[re.compile(pattern)],
+            severity="high",
+            description="Test deny rule",
+        )
+        policy = Policy(name="test-policy", rules=[rule], description="Test")
+        guard = Guard()
+        guard.add_policy(policy)
+        return guard
+
+    @pytest.mark.anyio
+    async def test_scanner_benign_stream_passes_through(self) -> None:
+        """Scanner should not interfere with benign content."""
+        from agentguard.proxy.inbound import InboundScanner
+
+        guard = self._make_scanner_guard(r"HARMFUL_PATTERN")
+        scanner = InboundScanner(guard)
+
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "Hello"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": " world"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [(c, s) async for c, s in stream_sse_response(resp, scanner=scanner)]
+
+        # All chunks forwarded, no early termination
+        assert len(chunks) == 3
+        # Scanner should have accumulated the content
+        assert scanner.accumulated_content == "Hello world"
+
+    @pytest.mark.anyio
+    async def test_scanner_denies_harmful_content(self) -> None:
+        """Scanner should stop stream when harmful content is detected."""
+        from agentguard.proxy.inbound import InboundScanner
+
+        guard = self._make_scanner_guard(r"HARMFUL")
+        scanner = InboundScanner(guard)
+
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "ok "}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": "HARMFUL"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": " more"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [(c, s) async for c, s in stream_sse_response(resp, scanner=scanner)]
+
+        # First chunk passes, second triggers denial.
+        # After denial: warning event + [DONE] are injected, stream stops.
+        # The harmful chunk itself is forwarded (already sent to client),
+        # then the warning and done markers follow.
+        # Total: chunk1 (ok) + chunk2 (HARMFUL) + warning + done = 4
+        assert len(chunks) == 4
+
+        # Last two chunks should be the warning event and [DONE]
+        warning_bytes = chunks[-2][0]
+        assert b"error" in warning_bytes or b"blocked" in warning_bytes
+
+        done_bytes = chunks[-1][0]
+        assert b"[DONE]" in done_bytes
+
+    @pytest.mark.anyio
+    async def test_scanner_denial_stops_iteration(self) -> None:
+        """After scanner denial, remaining upstream lines should not be yielded."""
+        from agentguard.proxy.inbound import InboundScanner
+
+        guard = self._make_scanner_guard(r"STOP")
+        scanner = InboundScanner(guard)
+
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "STOP"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": "more1"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": "more2"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [(c, s) async for c, s in stream_sse_response(resp, scanner=scanner)]
+
+        # chunk1 (STOP) + warning + done = 3, remaining lines NOT yielded
+        assert len(chunks) == 3
+
+    @pytest.mark.anyio
+    async def test_scanner_cross_chunk_detection(self) -> None:
+        """Scanner should detect patterns spanning multiple chunks."""
+        from agentguard.proxy.inbound import InboundScanner
+
+        guard = self._make_scanner_guard(r"HARMFUL_CONTENT")
+        scanner = InboundScanner(guard)
+
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "HARMFUL"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": "_CONTENT"}}]}),
+            "data: " + json.dumps({"choices": [{"delta": {"content": " safe"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [(c, s) async for c, s in stream_sse_response(resp, scanner=scanner)]
+
+        # chunk1 (HARMFUL) passes, chunk2 (_CONTENT) triggers denial.
+        # After denial: warning + done injected. chunk3 and DONE not forwarded.
+        assert len(chunks) == 4  # chunk1 + chunk2 + warning + done
+
+    @pytest.mark.anyio
+    async def test_scanner_with_anthropic_format(self) -> None:
+        """Scanner should work with Anthropic SSE format."""
+        from agentguard.proxy.inbound import InboundScanner
+
+        guard = self._make_scanner_guard(r"SECRET")
+        scanner = InboundScanner(guard)
+
+        lines = [
+            "data: "
+            + json.dumps({"type": "content_block_delta", "delta": {"text": "ok "}}),
+            "data: "
+            + json.dumps({"type": "content_block_delta", "delta": {"text": "SECRET"}}),
+            "data: "
+            + json.dumps({"type": "content_block_delta", "delta": {"text": " more"}}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [(c, s) async for c, s in stream_sse_response(resp, scanner=scanner)]
+
+        # chunk1 + chunk2 + warning + done = 4
+        assert len(chunks) == 4
+        warning_bytes = chunks[-2][0]
+        assert b"blocked" in warning_bytes or b"error" in warning_bytes
+
+    @pytest.mark.anyio
+    async def test_scanner_none_parameter_same_as_no_scanner(self) -> None:
+        """Passing scanner=None should behave like no scanner."""
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "x"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [(c, s) async for c, s in stream_sse_response(resp, scanner=None)]
+
+        assert len(chunks) == 2
+        assert all(c[1] is None for c in chunks)
+
+    @pytest.mark.anyio
+    async def test_scanner_and_collect_not_combined(self) -> None:
+        """Scanner supersedes collect — collected field is always None."""
+        from agentguard.proxy.inbound import InboundScanner
+
+        guard = self._make_scanner_guard(r"NEVER_MATCHES")
+        scanner = InboundScanner(guard)
+
+        lines = [
+            "data: " + json.dumps({"choices": [{"delta": {"content": "Hi"}}]}),
+            "data: [DONE]",
+        ]
+        resp = _FakeStreamingResponse(lines)
+        chunks = [
+            (c, s)
+            async for c, s in stream_sse_response(resp, collect=True, scanner=scanner)
+        ]
+
+        # When scanner is active, the collected field should be None
+        assert all(c[1] is None for c in chunks)
