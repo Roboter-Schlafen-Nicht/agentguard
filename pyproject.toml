@@ -76,6 +76,9 @@ packages = ["src/agentguard"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "--strict-markers --tb=short -q"
+markers = [
+    "integration: Integration tests that exercise real component interactions",
+]
 
 [tool.ruff]
 target-version = "py310"
