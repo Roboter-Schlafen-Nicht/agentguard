@@ -750,3 +750,164 @@ class TestResponseScanningEdgeCases:
         assert mw.audit_log.entries[0].result == "allowed"
         assert mw.audit_log.entries[1].result == "denied"
         assert mw.audit_log.entries[1].action == "llm_response"
+
+
+# ===========================================================================
+# Test: Audit metadata enrichment (message_count, token_estimate)
+# ===========================================================================
+
+
+class TestAuditMetadataEnrichment:
+    """Test that audit entries include message_count and token_estimate."""
+
+    @pytest.mark.anyio
+    async def test_allowed_request_has_message_count(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Allowed request audit should include message_count."""
+        mw = GuardMiddleware(base_config)
+        messages = [
+            {"role": "system", "content": "You are helpful."},
+            {"role": "user", "content": "Hello there!"},
+        ]
+        request = _make_request(body=_openai_request_body(messages=messages))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            await mw.handle_request(request)
+
+        assert len(mw.audit_log.entries) == 1
+        meta = mw.audit_log.entries[0].metadata
+        assert "message_count" in meta
+        assert meta["message_count"] == "2"
+
+    @pytest.mark.anyio
+    async def test_allowed_request_has_token_estimate(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Allowed request audit should include token_estimate."""
+        mw = GuardMiddleware(base_config)
+        messages = [
+            {"role": "user", "content": "Tell me about Python programming."},
+        ]
+        request = _make_request(body=_openai_request_body(messages=messages))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            await mw.handle_request(request)
+
+        meta = mw.audit_log.entries[0].metadata
+        assert "token_estimate" in meta
+        # Token estimate should be a positive string-encoded integer
+        assert int(meta["token_estimate"]) > 0
+
+    @pytest.mark.anyio
+    async def test_denied_request_has_message_count(self, policy_dir: Path) -> None:
+        """Denied request audit should include message_count."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(policy_dir),
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(
+            body=_openai_request_body(
+                messages=[
+                    {"role": "user", "content": "password: hunter2"},
+                ]
+            )
+        )
+
+        await mw.handle_request(request)
+
+        assert len(mw.audit_log.entries) == 1
+        meta = mw.audit_log.entries[0].metadata
+        assert "message_count" in meta
+        assert meta["message_count"] == "1"
+
+    @pytest.mark.anyio
+    async def test_denied_request_has_token_estimate(self, policy_dir: Path) -> None:
+        """Denied request audit should include token_estimate."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(policy_dir),
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(
+            body=_openai_request_body(
+                messages=[
+                    {"role": "user", "content": "password: hunter2"},
+                ]
+            )
+        )
+
+        await mw.handle_request(request)
+
+        meta = mw.audit_log.entries[0].metadata
+        assert "token_estimate" in meta
+        assert int(meta["token_estimate"]) > 0
+
+    @pytest.mark.anyio
+    async def test_non_json_body_has_zero_message_count(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Non-JSON body should have message_count=0 and token_estimate=0."""
+        mw = GuardMiddleware(base_config)
+        request = MagicMock()
+        request.method = "POST"
+        request.url.path = "/v1/audio/transcriptions"
+        request.url.query = ""
+        request.body = AsyncMock(return_value=b"binary audio data")
+        request.headers = {
+            "content-type": "multipart/form-data",
+            "host": "localhost",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = b'{"text": "transcription"}'
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            await mw.handle_request(request)
+
+        meta = mw.audit_log.entries[0].metadata
+        assert meta["message_count"] == "0"
+        assert meta["token_estimate"] == "0"
+
+    @pytest.mark.anyio
+    async def test_token_estimate_scales_with_content(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Token estimate should be larger for longer messages."""
+        mw = GuardMiddleware(base_config)
+        short_messages = [{"role": "user", "content": "Hi"}]
+        long_messages = [{"role": "user", "content": "Tell me a very long story " * 50}]
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        # Short request
+        request_short = _make_request(
+            body=_openai_request_body(messages=short_messages)
+        )
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            await mw.handle_request(request_short)
+        short_tokens = int(mw.audit_log.entries[-1].metadata["token_estimate"])
+
+        # Long request
+        request_long = _make_request(body=_openai_request_body(messages=long_messages))
+        with patch.object(mw, "_forward_request", return_value=mock_response):
+            await mw.handle_request(request_long)
+        long_tokens = int(mw.audit_log.entries[-1].metadata["token_estimate"])
+
+        assert long_tokens > short_tokens
