@@ -1,0 +1,65 @@
+# AgentGuard LLM API Proxy — systemd user service
+#
+# Template unit. The instance name selects the protection preset:
+#
+#   systemctl --user start agentguard-proxy@strict
+#   systemctl --user start agentguard-proxy@balanced
+#   systemctl --user start agentguard-proxy@builtins
+#
+# Install:
+#   bash scripts/proxy-install.sh
+#
+# Configuration:
+#   ~/.config/agentguard/proxy.env    (environment overrides)
+#
+# Logs:
+#   journalctl --user -u agentguard-proxy@builtins -f
+
+[Unit]
+Description=AgentGuard LLM API Proxy (%i)
+Documentation=https://github.com/Roboter-Schlafen-Nicht/agentguard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Defaults — override in ~/.config/agentguard/proxy.env
+Environment=AGENTGUARD_UPSTREAM=https://api.githubcopilot.com
+Environment=AGENTGUARD_PORT=8080
+Environment=AGENTGUARD_TIMEOUT=300
+Environment=AGENTGUARD_ACTOR=opencode-proxy
+Environment=AGENTGUARD_AUDIT_DIR=%h/.local/share/agentguard/audit
+Environment=AGENTGUARD_BIN=agentguard
+
+# Load user overrides (file is optional, - prefix means no error if missing)
+EnvironmentFile=-%h/.config/agentguard/proxy.env
+
+ExecStartPre=/bin/mkdir -p ${AGENTGUARD_AUDIT_DIR}
+ExecStart=/bin/bash -c '\
+  PRESET="%i"; \
+  ARGS="--port ${AGENTGUARD_PORT} \
+        --audit-dir ${AGENTGUARD_AUDIT_DIR} \
+        --actor ${AGENTGUARD_ACTOR} \
+        --timeout ${AGENTGUARD_TIMEOUT} \
+        --scan-responses"; \
+  if [ "$PRESET" = "builtins" ]; then \
+    exec ${AGENTGUARD_BIN} proxy ${AGENTGUARD_UPSTREAM} --builtins $ARGS; \
+  else \
+    exec ${AGENTGUARD_BIN} proxy ${AGENTGUARD_UPSTREAM} --preset $PRESET $ARGS; \
+  fi'
+
+# Restart on crash (not on manual stop)
+Restart=on-failure
+RestartSec=3
+
+# Rate-limit restarts: max 5 in 60s
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+# Security hardening (user service — limited options)
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

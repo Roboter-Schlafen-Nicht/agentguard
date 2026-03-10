@@ -278,6 +278,101 @@ Override defaults without CLI flags:
 
 ---
 
+## Systemd User Service (Auto-Start)
+
+For production use, install the proxy as a systemd user service so it
+starts automatically on login and restarts on crash:
+
+### Install
+
+```bash
+bash scripts/proxy-install.sh install [preset]
+```
+
+This will:
+
+1. Resolve the full path to the `agentguard` binary
+2. Copy the service template to `~/.config/systemd/user/`
+3. Create a default config at `~/.config/agentguard/proxy.env`
+4. Enable and start the service
+
+The default preset is `builtins` (all 11 built-in policies). You can
+also specify `strict`, `balanced`, or `permissive`:
+
+```bash
+bash scripts/proxy-install.sh install balanced
+```
+
+### Configuration
+
+All settings are in `~/.config/agentguard/proxy.env`:
+
+```bash
+# Full path to agentguard binary (auto-detected at install time)
+AGENTGUARD_BIN=/path/to/agentguard
+
+# Upstream LLM API base URL
+#AGENTGUARD_UPSTREAM=https://api.githubcopilot.com
+
+# Proxy listen port
+#AGENTGUARD_PORT=8080
+
+# Upstream request timeout (seconds)
+#AGENTGUARD_TIMEOUT=300
+
+# Actor name in audit entries
+#AGENTGUARD_ACTOR=opencode-proxy
+
+# Audit log directory
+#AGENTGUARD_AUDIT_DIR=$HOME/.local/share/agentguard/audit
+```
+
+After editing, restart the service:
+
+```bash
+systemctl --user restart agentguard-proxy@builtins
+```
+
+### Management commands
+
+```bash
+# Status (with health check and policy count)
+bash scripts/proxy-install.sh status
+
+# Or use systemctl directly
+systemctl --user status agentguard-proxy@builtins
+systemctl --user restart agentguard-proxy@builtins
+systemctl --user stop agentguard-proxy@builtins
+
+# Live logs
+journalctl --user -u agentguard-proxy@builtins -f
+```
+
+### Uninstall
+
+```bash
+bash scripts/proxy-install.sh uninstall
+```
+
+This stops and disables all preset instances, removes the service unit,
+but preserves your config and audit logs.
+
+### Systemd vs daemon script
+
+| Feature | `proxy.sh` | systemd service |
+|---------|-----------|-----------------|
+| Auto-start on login | ❌ | ✅ |
+| Crash recovery | ❌ | ✅ (auto-restart) |
+| Log management | stdout/stderr | journald |
+| Resource limits | ❌ | ✅ (cgroups) |
+| Security hardening | ❌ | ✅ (NoNewPrivileges, PrivateTmp) |
+| Quick testing | ✅ | ❌ |
+
+Use `proxy.sh` for quick testing and one-off runs. Use the systemd
+service for always-on protection in development or production.
+
+---
+
 ## Verifying the Integration
 
 After configuring, verify everything works:
