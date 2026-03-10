@@ -646,6 +646,7 @@ def _get_registry(args: argparse.Namespace) -> TrustRegistry:
 def _cmd_trust_add(args: argparse.Namespace) -> int:
     """Add or update a server in the trust registry."""
     registry = _get_registry(args)
+    is_update = registry.get(args.name) is not None
     try:
         entry = registry.add(
             server_name=args.name,
@@ -657,7 +658,7 @@ def _cmd_trust_add(args: argparse.Namespace) -> int:
         print(f"Error: {e}", file=sys.stderr)
         return 1
 
-    action = "Updated" if registry.get(args.name) is not None else "Added"
+    action = "Updated" if is_update else "Added"
     print(f"{action}: {entry.server_name} (level={entry.trust_level.value})")
     if entry.package_hash:
         print(f"  Hash: {entry.package_hash[:16]}...")

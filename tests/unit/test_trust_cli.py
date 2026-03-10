@@ -60,6 +60,7 @@ class TestTrustAdd:
         )
         assert exit_code == 0
         assert "my-server" in stdout
+        assert "Added" in stdout
 
     def test_add_server_with_hash(self, tmp_path: Path) -> None:
         reg = str(tmp_path / "reg.yaml")
@@ -82,10 +83,11 @@ class TestTrustAdd:
     def test_add_server_update(self, tmp_path: Path) -> None:
         reg = str(tmp_path / "reg.yaml")
         _run_cli("trust", "add", "s", "--level", "trusted", "--registry", reg)
-        exit_code, _stdout, _ = _run_cli(
+        exit_code, stdout, _ = _run_cli(
             "trust", "add", "s", "--level", "restricted", "--registry", reg
         )
         assert exit_code == 0
+        assert "Updated" in stdout
 
     def test_add_missing_level_fails(self, tmp_path: Path) -> None:
         reg = str(tmp_path / "reg.yaml")

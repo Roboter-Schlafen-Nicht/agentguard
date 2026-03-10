@@ -87,6 +87,7 @@ async def with_server(
     audit_dir: Path | None = None,
     actor: str = "test-agent",
     builtins: bool = False,
+    trust_registry: str | None = None,
 ) -> None:
     """Spin up an AgentGuard MCP server in-process and run fn(session).
 
@@ -100,6 +101,7 @@ async def with_server(
         audit_dir=str(audit_dir) if audit_dir else None,
         actor=actor,
         load_builtins=builtins,
+        trust_registry=trust_registry,
     )
 
     server = app._mcp_server  # type: ignore[attr-defined]
@@ -1539,6 +1541,129 @@ async def with_server_auto_discover(
 
         tg.start_soon(run_server)
         tg.start_soon(run_client)
+
+
+# ===========================================================================
+# Test: Trust query MCP tool
+# ===========================================================================
+
+
+class TestTrustQueryTool:
+    """Test the agentguard_trust_query MCP tool."""
+
+    @pytest.mark.anyio
+    async def test_query_empty_registry(self, tmp_path: Path) -> None:
+        """Querying an empty registry should return zero servers."""
+        reg_file = str(tmp_path / "trust.yaml")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_trust_query", {})
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert data["count"] == 0
+            assert data["servers"] == []
+
+        await with_server(check, trust_registry=reg_file)
+
+    @pytest.mark.anyio
+    async def test_query_list_all(self, tmp_path: Path) -> None:
+        """Listing all entries should return every registered server."""
+        from agentguard.trust.registry import TrustRegistry
+
+        reg_file = tmp_path / "trust.yaml"
+        registry = TrustRegistry(path=reg_file)
+        registry.add("server-a", "trusted")
+        registry.add("server-b", "restricted")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_trust_query", {})
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert data["count"] == 2
+            names = {s["server_name"] for s in data["servers"]}
+            assert names == {"server-a", "server-b"}
+
+        await with_server(check, trust_registry=str(reg_file))
+
+    @pytest.mark.anyio
+    async def test_query_by_server_name(self, tmp_path: Path) -> None:
+        """Looking up a specific server should return its entry."""
+        from agentguard.trust.registry import TrustRegistry
+
+        reg_file = tmp_path / "trust.yaml"
+        registry = TrustRegistry(path=reg_file)
+        registry.add("my-server", "trusted", notes="test note")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "agentguard_trust_query", {"server_name": "my-server"}
+            )
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert data["server_name"] == "my-server"
+            assert data["trust_level"] == "trusted"
+            assert data["notes"] == "test note"
+
+        await with_server(check, trust_registry=str(reg_file))
+
+    @pytest.mark.anyio
+    async def test_query_server_not_found(self, tmp_path: Path) -> None:
+        """Looking up a nonexistent server should return an error."""
+        reg_file = str(tmp_path / "trust.yaml")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "agentguard_trust_query", {"server_name": "no-such-server"}
+            )
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert "error" in data
+            assert "no-such-server" in data["error"]
+
+        await with_server(check, trust_registry=reg_file)
+
+    @pytest.mark.anyio
+    async def test_query_filter_by_trust_level(self, tmp_path: Path) -> None:
+        """Filtering by trust_level should return only matching servers."""
+        from agentguard.trust.registry import TrustRegistry
+
+        reg_file = tmp_path / "trust.yaml"
+        registry = TrustRegistry(path=reg_file)
+        registry.add("trusted-srv", "trusted")
+        registry.add("restricted-srv", "restricted")
+        registry.add("untrusted-srv", "untrusted")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "agentguard_trust_query", {"trust_level": "restricted"}
+            )
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert data["count"] == 1
+            assert data["servers"][0]["server_name"] == "restricted-srv"
+            assert data["servers"][0]["trust_level"] == "restricted"
+
+        await with_server(check, trust_registry=str(reg_file))
+
+    @pytest.mark.anyio
+    async def test_query_handles_corrupted_registry(self, tmp_path: Path) -> None:
+        """Trust query should return an error for a corrupted registry file."""
+        reg_file = tmp_path / "trust.yaml"
+        reg_file.write_text("not: [valid: yaml: {{{{")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_trust_query", {})
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert "error" in data
+
+        await with_server(check, trust_registry=str(reg_file))
 
 
 # ===========================================================================
