@@ -1,0 +1,27 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "_comment": "Example: OpenCode with AgentGuard MCP + LLM proxy (full two-layer protection)",
+  "model": "github-copilot/claude-opus-4.6",
+  "provider": {
+    "github-copilot": {
+      "options": {
+        "baseURL": "http://127.0.0.1:8080"
+      }
+    }
+  },
+  "mcp": {
+    "agentguard": {
+      "type": "local",
+      "command": ["agentguard", "serve", "--builtins", "--auto-discover", "--audit-dir", "private/audit"]
+    }
+  },
+  "permission": {
+    "*": "allow",
+    "bash": "deny",
+    "read": "deny",
+    "write": "deny",
+    "edit": "deny",
+    "glob": "deny",
+    "grep": "deny"
+  }
+}
