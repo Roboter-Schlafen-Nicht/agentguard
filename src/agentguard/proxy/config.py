@@ -7,6 +7,7 @@ LLM API proxy server.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
@@ -38,6 +39,16 @@ class ProxyConfig:
             for parsing request/response bodies (e.g. ``"openai"``).
             If None, defaults to ``"openai"`` (most LLM APIs use
             the OpenAI-compatible format).
+        auth_file: Path to a JSON auth credentials file. When set,
+            the proxy reads a Bearer token from this file and
+            injects it into the ``Authorization`` header of upstream
+            requests, replacing any token sent by the client. This
+            allows the proxy to handle authentication on behalf of
+            clients that don't have direct access to the upstream
+            credentials. File format: ``{"<provider>": {"refresh":
+            "<token>", ...}}`` (OpenCode auth.json format).
+        auth_provider: Provider key to look up in the auth file.
+            Defaults to ``"github-copilot"``.
     """
 
     upstream_base_url: str
@@ -53,6 +64,8 @@ class ProxyConfig:
     timeout: float = 120.0
     allowed_endpoints: list[str] = field(default_factory=list)
     provider: str | None = None
+    auth_file: str | None = None
+    auth_provider: str = "github-copilot"
 
     def __post_init__(self) -> None:
         """Validate configuration."""
@@ -67,3 +80,6 @@ class ProxyConfig:
         if self.timeout <= 0:
             msg = f"timeout must be positive, got {self.timeout}"
             raise ValueError(msg)
+        if self.auth_file is not None and not Path(self.auth_file).is_file():
+            msg = f"auth_file does not exist: {self.auth_file}"
+            raise FileNotFoundError(msg)

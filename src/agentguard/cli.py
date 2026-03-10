@@ -408,6 +408,19 @@ def _build_parser() -> argparse.ArgumentParser:
         default=120.0,
         help="Timeout in seconds for upstream requests (default: 120).",
     )
+    proxy_parser.add_argument(
+        "--auth-file",
+        help=(
+            "Path to a JSON auth credentials file. The proxy reads a "
+            "Bearer token from this file and injects it into upstream "
+            "requests (OpenCode auth.json format)."
+        ),
+    )
+    proxy_parser.add_argument(
+        "--auth-provider",
+        default="github-copilot",
+        help=("Provider key to look up in the auth file (default: github-copilot)."),
+    )
 
     return parser
 
@@ -944,6 +957,8 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             preset=preset,
             scan_responses=args.scan_responses,
             timeout=args.timeout,
+            auth_file=getattr(args, "auth_file", None),
+            auth_provider=getattr(args, "auth_provider", "github-copilot"),
         )
         app = create_proxy_app(config)
 

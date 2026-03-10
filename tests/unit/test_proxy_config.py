@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from agentguard.proxy.config import ProxyConfig
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestProxyConfigDefaults:
@@ -140,3 +145,62 @@ class TestProxyConfigProvider:
         )
         assert cfg.provider == "openai"
         assert cfg.scan_responses is True
+
+
+# ===========================================================================
+# Test: auth_file field
+# ===========================================================================
+
+
+class TestProxyConfigAuthFile:
+    """Test auth_file and auth_provider fields on ProxyConfig."""
+
+    def test_auth_file_defaults_to_none(self) -> None:
+        """auth_file should default to None."""
+        cfg = ProxyConfig(upstream_base_url="https://api.openai.com")
+        assert cfg.auth_file is None
+
+    def test_auth_provider_defaults_to_github_copilot(self) -> None:
+        """auth_provider should default to 'github-copilot'."""
+        cfg = ProxyConfig(upstream_base_url="https://api.openai.com")
+        assert cfg.auth_provider == "github-copilot"
+
+    def test_auth_file_accepts_path(self, tmp_path: Path) -> None:
+        """auth_file can be set to a file path string."""
+        auth = tmp_path / "auth.json"
+        auth.write_text('{"github-copilot": {"refresh": "gho_test"}}')
+        cfg = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            auth_file=str(auth),
+        )
+        assert cfg.auth_file == str(auth)
+
+    def test_auth_provider_accepts_string(self) -> None:
+        """auth_provider can be set to any provider name."""
+        cfg = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            auth_provider="anthropic",
+        )
+        assert cfg.auth_provider == "anthropic"
+
+    def test_auth_file_nonexistent_raises(self) -> None:
+        """Nonexistent auth_file should raise FileNotFoundError."""
+        with pytest.raises(FileNotFoundError, match="auth_file"):
+            ProxyConfig(
+                upstream_base_url="https://api.openai.com",
+                auth_file="/nonexistent/auth.json",
+            )
+
+    def test_auth_file_with_all_fields(self, tmp_path: Path) -> None:
+        """Config with auth_file alongside other fields."""
+        auth = tmp_path / "auth.json"
+        auth.write_text('{"github-copilot": {"refresh": "gho_test"}}')
+        cfg = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            auth_file=str(auth),
+            auth_provider="github-copilot",
+            port=9090,
+        )
+        assert cfg.auth_file == str(auth)
+        assert cfg.auth_provider == "github-copilot"
+        assert cfg.port == 9090

@@ -150,3 +150,75 @@ class TestProxyCLISubcommand:
                 sys.stderr = old_stderr
         assert exit_code == 1
         assert "pip install agentguard[proxy]" in captured.getvalue()
+
+    def test_proxy_auth_file_option(self, tmp_path: Path) -> None:
+        """--auth-file option should be passed to ProxyConfig."""
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text('{"github-copilot": {"refresh": "gho_test"}}')
+
+        with (
+            patch("agentguard.cli.create_proxy_app") as mock_create,
+            patch("uvicorn.run"),
+        ):
+            mock_create.return_value = "fake-app"
+            exit_code = main(
+                [
+                    "proxy",
+                    "https://api.githubcopilot.com",
+                    "--auth-file",
+                    str(auth_file),
+                ]
+            )
+
+        assert exit_code == 0
+        config = mock_create.call_args[0][0]
+        assert config.auth_file == str(auth_file)
+
+    def test_proxy_auth_provider_option(self, tmp_path: Path) -> None:
+        """--auth-provider option should be passed to ProxyConfig."""
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text('{"anthropic": {"key": "sk-ant-test"}}')
+
+        with (
+            patch("agentguard.cli.create_proxy_app") as mock_create,
+            patch("uvicorn.run"),
+        ):
+            mock_create.return_value = "fake-app"
+            exit_code = main(
+                [
+                    "proxy",
+                    "https://api.anthropic.com",
+                    "--auth-file",
+                    str(auth_file),
+                    "--auth-provider",
+                    "anthropic",
+                ]
+            )
+
+        assert exit_code == 0
+        config = mock_create.call_args[0][0]
+        assert config.auth_file == str(auth_file)
+        assert config.auth_provider == "anthropic"
+
+    def test_proxy_auth_provider_default_github_copilot(self, tmp_path: Path) -> None:
+        """--auth-provider should default to github-copilot."""
+        auth_file = tmp_path / "auth.json"
+        auth_file.write_text('{"github-copilot": {"refresh": "gho_test"}}')
+
+        with (
+            patch("agentguard.cli.create_proxy_app") as mock_create,
+            patch("uvicorn.run"),
+        ):
+            mock_create.return_value = "fake-app"
+            exit_code = main(
+                [
+                    "proxy",
+                    "https://api.githubcopilot.com",
+                    "--auth-file",
+                    str(auth_file),
+                ]
+            )
+
+        assert exit_code == 0
+        config = mock_create.call_args[0][0]
+        assert config.auth_provider == "github-copilot"

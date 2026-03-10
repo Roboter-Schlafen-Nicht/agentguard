@@ -56,12 +56,84 @@ class GuardMiddleware:
 
         Args:
             config: Proxy server configuration.
+
+        Raises:
+            ValueError: If the auth file is invalid JSON or the
+                configured provider key is not found in the file.
         """
         self.config = config
         self.guard = self._build_guard()
         self.provider = self._resolve_provider()
+        self._auth_token: str | None = self._load_auth_token()
         self.session_id = f"proxy-{uuid.uuid4().hex[:12]}"
         self.audit_log = AuditLog(self.session_id)
+
+    def _load_auth_token(self) -> str | None:
+        """Load an auth token from the configured auth file.
+
+        Reads the JSON auth file and extracts a Bearer token for the
+        configured provider.  Supports two token formats:
+
+        - OAuth (e.g. GitHub Copilot): ``{"refresh": "gho_..."}``
+        - API key (e.g. Anthropic): ``{"key": "sk-ant-..."}``
+
+        Returns:
+            The raw token string (without ``Bearer `` prefix), or
+            None if no auth file is configured.
+
+        Raises:
+            ValueError: If the file contains invalid JSON or the
+                configured provider key is not present.
+        """
+        if self.config.auth_file is None:
+            return None
+
+        auth_path = Path(self.config.auth_file)
+        raw = auth_path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            msg = f"Invalid JSON in auth file {self.config.auth_file}: {exc}"
+            raise ValueError(msg) from exc
+
+        if not isinstance(data, dict):
+            type_name = type(data).__name__
+            msg = f"Invalid JSON in auth file: expected object, got {type_name}"
+            raise ValueError(msg) from None
+
+        provider_key = self.config.auth_provider
+        if provider_key not in data:
+            msg = (
+                f"Auth provider '{provider_key}' not found in "
+                f"{self.config.auth_file}. "
+                f"Available providers: {', '.join(data.keys())}"
+            )
+            raise ValueError(msg)
+
+        provider_data = data[provider_key]
+        if not isinstance(provider_data, dict):
+            msg = (
+                f"Auth provider '{provider_key}' value must be an object, "
+                f"got {type(provider_data).__name__}"
+            )
+            raise ValueError(msg)
+
+        # Try "refresh" (OAuth token), then "key" (API key)
+        token = provider_data.get("refresh") or provider_data.get("key")
+        if not token:
+            msg = f"Auth provider '{provider_key}' has no 'refresh' or 'key' field"
+            raise ValueError(msg)
+
+        return str(token)
+
+    def _inject_auth_headers(self, headers: dict[str, str]) -> None:
+        """Replace or add the Authorization header with the loaded token.
+
+        Modifies *headers* in place.  Does nothing if no auth token
+        was loaded at init time.
+        """
+        if self._auth_token is not None:
+            headers["authorization"] = f"Bearer {self._auth_token}"
 
     def _build_guard(self) -> Guard:
         """Build a Guard instance from the config."""
@@ -188,6 +260,9 @@ class GuardMiddleware:
         headers = dict(request.headers)
         headers.pop("host", None)
         headers.pop("content-length", None)
+
+        # Inject auth token if configured
+        self._inject_auth_headers(headers)
 
         try:
             is_streaming = self._is_streaming_request(body)
