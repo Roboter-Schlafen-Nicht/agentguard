@@ -1174,3 +1174,248 @@ class TestProviderIntegration:
             response = await mw.handle_request(request)
 
         assert response.status_code == 403
+
+
+# ===========================================================================
+# Test: Auth file token injection
+# ===========================================================================
+
+
+class TestAuthFileTokenInjection:
+    """Test that auth_file injects Authorization header into upstream requests."""
+
+    @pytest.fixture
+    def auth_file(self, tmp_path: Path) -> Path:
+        """Create a temporary auth.json file."""
+        auth = tmp_path / "auth.json"
+        auth.write_text(
+            json.dumps(
+                {
+                    "github-copilot": {
+                        "type": "oauth",
+                        "refresh": "gho_testtoken1234567890abcdefghij",
+                        "access": "gho_testtoken1234567890abcdefghij",
+                        "expires": 0,
+                    }
+                }
+            )
+        )
+        return auth
+
+    @pytest.fixture
+    def multi_provider_auth_file(self, tmp_path: Path) -> Path:
+        """Create an auth.json with multiple providers."""
+        auth = tmp_path / "auth.json"
+        auth.write_text(
+            json.dumps(
+                {
+                    "github-copilot": {
+                        "type": "oauth",
+                        "refresh": "gho_copilottoken",
+                        "access": "gho_copilottoken",
+                        "expires": 0,
+                    },
+                    "anthropic": {
+                        "type": "api",
+                        "key": "sk-ant-testkey123",
+                    },
+                }
+            )
+        )
+        return auth
+
+    @pytest.mark.anyio
+    async def test_auth_file_replaces_authorization_header(
+        self, auth_file: Path
+    ) -> None:
+        """When auth_file is set, Authorization header should be replaced."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.githubcopilot.com",
+            auth_file=str(auth_file),
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body())
+        # The client sends a dummy auth header
+        request.headers = {
+            "content-type": "application/json",
+            "host": "localhost:8080",
+            "authorization": "Bearer dummy-token",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(
+            mw, "_forward_request", return_value=mock_response
+        ) as mock_fwd:
+            await mw.handle_request(request)
+
+        # Check the headers passed to _forward_request
+        call_args = mock_fwd.call_args
+        forwarded_headers = call_args[0][2]  # 3rd positional arg is headers
+        assert (
+            forwarded_headers["authorization"]
+            == "Bearer gho_testtoken1234567890abcdefghij"
+        )
+
+    @pytest.mark.anyio
+    async def test_auth_file_adds_authorization_when_missing(
+        self, auth_file: Path
+    ) -> None:
+        """When auth_file is set and no auth header exists, it should be added."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.githubcopilot.com",
+            auth_file=str(auth_file),
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body())
+        # No authorization header in request
+        request.headers = {
+            "content-type": "application/json",
+            "host": "localhost:8080",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(
+            mw, "_forward_request", return_value=mock_response
+        ) as mock_fwd:
+            await mw.handle_request(request)
+
+        call_args = mock_fwd.call_args
+        forwarded_headers = call_args[0][2]
+        assert (
+            forwarded_headers["authorization"]
+            == "Bearer gho_testtoken1234567890abcdefghij"
+        )
+
+    @pytest.mark.anyio
+    async def test_no_auth_file_preserves_original_header(
+        self,
+    ) -> None:
+        """Without auth_file, original Authorization header is forwarded."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body())
+        request.headers = {
+            "content-type": "application/json",
+            "host": "localhost:8080",
+            "authorization": "Bearer original-token",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(
+            mw, "_forward_request", return_value=mock_response
+        ) as mock_fwd:
+            await mw.handle_request(request)
+
+        call_args = mock_fwd.call_args
+        forwarded_headers = call_args[0][2]
+        assert forwarded_headers["authorization"] == "Bearer original-token"
+
+    @pytest.mark.anyio
+    async def test_auth_file_with_custom_provider(
+        self, multi_provider_auth_file: Path
+    ) -> None:
+        """auth_provider selects which provider's token to use."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.anthropic.com",
+            auth_file=str(multi_provider_auth_file),
+            auth_provider="anthropic",
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body())
+        request.headers = {
+            "content-type": "application/json",
+            "host": "localhost:8080",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.content = json.dumps({"choices": []}).encode()
+        mock_response.headers = {"content-type": "application/json"}
+
+        with patch.object(
+            mw, "_forward_request", return_value=mock_response
+        ) as mock_fwd:
+            await mw.handle_request(request)
+
+        call_args = mock_fwd.call_args
+        forwarded_headers = call_args[0][2]
+        # Anthropic uses "key" not "refresh"
+        assert forwarded_headers["authorization"] == "Bearer sk-ant-testkey123"
+
+    @pytest.mark.anyio
+    async def test_auth_file_streaming_replaces_header(self, auth_file: Path) -> None:
+        """Auth file should also work for streaming requests."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.githubcopilot.com",
+            auth_file=str(auth_file),
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body(stream=True))
+        request.headers = {
+            "content-type": "application/json",
+            "host": "localhost:8080",
+            "authorization": "Bearer dummy",
+        }
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        async def fake_aiter_bytes():
+            yield b"data: {}\n\n"
+
+        mock_response.aiter_bytes = fake_aiter_bytes
+
+        mock_client = MagicMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(
+            mw, "_forward_streaming", return_value=stream_ctx
+        ) as mock_fwd:
+            await mw.handle_request(request)
+
+        call_args = mock_fwd.call_args
+        forwarded_headers = call_args[0][2]  # 3rd positional arg
+        assert (
+            forwarded_headers["authorization"]
+            == "Bearer gho_testtoken1234567890abcdefghij"
+        )
+
+    @pytest.mark.anyio
+    async def test_auth_file_missing_provider_raises(self, tmp_path: Path) -> None:
+        """If auth_provider key is missing from auth file, construction raises."""
+        auth = tmp_path / "auth.json"
+        auth.write_text(json.dumps({"other-provider": {"key": "abc"}}))
+        with pytest.raises(ValueError, match=r"provider.*not found"):
+            config = ProxyConfig(
+                upstream_base_url="https://api.openai.com",
+                auth_file=str(auth),
+                auth_provider="github-copilot",
+            )
+            GuardMiddleware(config)
+
+    @pytest.mark.anyio
+    async def test_auth_file_invalid_json_raises(self, tmp_path: Path) -> None:
+        """Invalid JSON in auth file should raise ValueError."""
+        auth = tmp_path / "auth.json"
+        auth.write_text("not valid json {{{")
+        with pytest.raises(ValueError, match=r"[Ii]nvalid.*JSON|parse"):
+            config = ProxyConfig(
+                upstream_base_url="https://api.openai.com",
+                auth_file=str(auth),
+            )
+            GuardMiddleware(config)
