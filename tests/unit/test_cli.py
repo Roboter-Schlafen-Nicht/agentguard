@@ -634,6 +634,8 @@ class TestServeCommand:
             actor="agent",
             load_builtins=False,
             auto_discover=False,
+            preset=None,
+            trust_registry=None,
         )
         mock_app.run.assert_called_once()
 
@@ -669,6 +671,8 @@ class TestServeCommand:
             actor="my-agent",
             load_builtins=True,
             auto_discover=True,
+            preset=None,
+            trust_registry=None,
         )
         mock_app.run.assert_called_once()
 
@@ -688,6 +692,8 @@ class TestServeCommand:
             actor="agent",
             load_builtins=True,
             auto_discover=False,
+            preset=None,
+            trust_registry=None,
         )
 
     def test_serve_auto_discover_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -706,6 +712,8 @@ class TestServeCommand:
             actor="agent",
             load_builtins=False,
             auto_discover=True,
+            preset=None,
+            trust_registry=None,
         )
 
     def test_serve_nonexistent_policy_dir(self) -> None:

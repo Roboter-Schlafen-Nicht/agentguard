@@ -851,7 +851,8 @@ class TestServerToolDefinitions:
     async def test_server_lists_tools(self) -> None:
         """Server should expose all 9 tools: shell_execute, file_read,
         file_write, file_edit, file_glob, file_grep, file_list,
-        agentguard_status, and agentguard_audit_query."""
+        agentguard_status, agentguard_audit_query,
+        agentguard_trust_query, and agentguard_scan_package."""
 
         async def check(session: ClientSession) -> None:
             tools_resp = await session.list_tools()
@@ -865,6 +866,8 @@ class TestServerToolDefinitions:
             assert "file_list" in tool_names
             assert "agentguard_status" in tool_names
             assert "agentguard_audit_query" in tool_names
+            assert "agentguard_trust_query" in tool_names
+            assert "agentguard_scan_package" in tool_names
 
         await with_server(check)
 
@@ -1536,3 +1539,106 @@ async def with_server_auto_discover(
 
         tg.start_soon(run_server)
         tg.start_soon(run_client)
+
+
+# ===========================================================================
+# Test: Scan package MCP tool
+# ===========================================================================
+# ===========================================================================
+
+
+class TestScanPackageTool:
+    """Test the agentguard_scan_package MCP tool."""
+
+    @pytest.mark.anyio
+    async def test_scan_tool_has_expected_params(self) -> None:
+        """agentguard_scan_package should accept path and min_severity."""
+
+        async def check(session: ClientSession) -> None:
+            tools_resp = await session.list_tools()
+            scan = next(
+                t for t in tools_resp.tools if t.name == "agentguard_scan_package"
+            )
+            props = scan.inputSchema.get("properties", {})
+            assert "path" in props
+            assert "min_severity" in props
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_scan_clean_package(self, tmp_path: Path) -> None:
+        """Scanning a clean directory should return zero findings."""
+        pkg = tmp_path / "clean_pkg"
+        pkg.mkdir()
+        (pkg / "main.py").write_text("x = 1\n")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "agentguard_scan_package", {"path": str(pkg)}
+            )
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert data["finding_count"] == 0
+            assert data["files_scanned"] >= 1
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_scan_with_findings(self, tmp_path: Path) -> None:
+        """Scanning code with eval() should produce findings."""
+        pkg = tmp_path / "bad_pkg"
+        pkg.mkdir()
+        (pkg / "evil.py").write_text("result = eval(\n")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "agentguard_scan_package", {"path": str(pkg)}
+            )
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert data["finding_count"] >= 1
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_scan_missing_path(self) -> None:
+        """Scanning a nonexistent path should return an error."""
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "agentguard_scan_package",
+                {"path": "/nonexistent/xyz/pkg"},
+            )
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert "error" in data
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_scan_min_severity_filter(self, tmp_path: Path) -> None:
+        """min_severity should filter out lower-severity findings."""
+        pkg = tmp_path / "filter_pkg"
+        pkg.mkdir()
+        # base64.b64encode is MEDIUM severity
+        (pkg / "encode.py").write_text("base64.b64encode(\n")
+
+        async def check(session: ClientSession) -> None:
+            # With no filter, should find something
+            r1 = await session.call_tool("agentguard_scan_package", {"path": str(pkg)})
+            import json
+
+            d1 = json.loads(r1.content[0].text)
+
+            # With critical filter, MEDIUM findings should be excluded
+            r2 = await session.call_tool(
+                "agentguard_scan_package",
+                {"path": str(pkg), "min_severity": "critical"},
+            )
+            d2 = json.loads(r2.content[0].text)
+            assert d2["finding_count"] <= d1["finding_count"]
+
+        await with_server(check)

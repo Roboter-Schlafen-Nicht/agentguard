@@ -31,6 +31,8 @@ def create_server(
     actor: str = "agent",
     load_builtins: bool = False,
     auto_discover: bool = False,
+    preset: str | None = None,
+    trust_registry: str | None = None,
 ) -> FastMCP:
     """Create an AgentGuard MCP server.
 
@@ -44,18 +46,35 @@ def create_server(
         auto_discover: Whether to auto-discover policies from standard
             locations (``.agentguard/policies/``, ``~/.agentguard/policies/``,
             ``$AGENTGUARD_POLICY_DIR``). Disabled by default.
+        preset: Named protection level preset to load
+            (``"strict"``, ``"balanced"``, or ``"permissive"``).
+            Mutually exclusive with ``load_builtins``.
+        trust_registry: Path to the trust registry YAML file.
+            If None, uses the default location
+            (``~/.agentguard/trust-registry.yaml``).
 
     Returns:
         A FastMCP application with tools registered.
 
     Raises:
         FileNotFoundError: If policy_dir does not exist.
+        ValueError: If both preset and load_builtins are specified,
+            or if the preset name is invalid.
     """
+    if preset is not None and load_builtins:
+        msg = "Cannot use both --preset and --builtins. Choose one."
+        raise ValueError(msg)
     guard = Guard()
     session_id = f"ag-{uuid.uuid4().hex[:12]}"
     audit_log = AuditLog(session_id)
 
     # --- load policies ------------------------------------------------
+    if preset is not None:
+        from agentguard.policies.presets import load_preset
+
+        for policy in load_preset(preset):
+            guard.add_policy(policy)
+
     if policy_dir is not None:
         policy_path = Path(policy_dir)
         if not policy_path.is_dir():
@@ -821,6 +840,107 @@ def create_server(
         )
         data = [e.to_dict() for e in entries]
         return json.dumps(data, indent=2)
+
+    @app.tool()
+    def agentguard_scan_package(
+        path: str,
+        min_severity: str | None = None,
+    ) -> str:
+        """Scan an MCP server package for security risks.
+
+        Performs regex-based static analysis of source code to detect
+        suspicious patterns across six risk categories: data exfiltration,
+        file-system access, code execution, credential access, persistence,
+        and obfuscation.
+
+        .. note::
+
+           This scanner is a safety net for first-pass triage, not a hard
+           security boundary.
+
+        Args:
+            path: Path to the package directory or single file to scan.
+            min_severity: Minimum severity to include in results.
+                One of ``"critical"``, ``"high"``, ``"medium"``, ``"low"``,
+                ``"info"``.  If omitted, all findings are included.
+
+        Returns:
+            JSON object with scan results including findings, file count,
+            and max severity.
+        """
+        from agentguard.scanner import Scanner, Severity
+
+        scanner = Scanner()
+        try:
+            result = scanner.scan(path)
+        except FileNotFoundError as exc:
+            return json.dumps({"error": str(exc)})
+
+        if min_severity is not None:
+            sev_order = {
+                Severity.CRITICAL: 4,
+                Severity.HIGH: 3,
+                Severity.MEDIUM: 2,
+                Severity.LOW: 1,
+                Severity.INFO: 0,
+            }
+            try:
+                threshold = sev_order[Severity(min_severity)]
+            except (ValueError, KeyError):
+                return json.dumps(
+                    {
+                        "error": f"Invalid severity: {min_severity!r}. "
+                        "Use critical, high, medium, low, or info.",
+                    }
+                )
+            result.findings = [
+                f for f in result.findings if sev_order[f.severity] >= threshold
+            ]
+
+        return json.dumps(result.to_dict(), indent=2)
+
+    @app.tool()
+    def agentguard_trust_query(
+        server_name: str | None = None,
+        trust_level: str | None = None,
+    ) -> str:
+        """Query the MCP server trust registry.
+
+        Look up trust information for registered MCP servers.
+        Returns trust level, integrity hash, and capabilities.
+
+        Args:
+            server_name: Look up a specific server by name.
+                If omitted, lists all entries.
+            trust_level: Filter by trust level
+                (``"trusted"``, ``"restricted"``, or ``"untrusted"``).
+
+        Returns:
+            JSON object with trust registry data.
+        """
+        from agentguard.trust.registry import TrustRegistry as _TrustRegistry
+
+        try:
+            registry = _TrustRegistry(path=trust_registry)
+        except Exception as exc:
+            return json.dumps({"error": f"Cannot load trust registry: {exc}"})
+
+        if server_name is not None:
+            entry = registry.get(server_name)
+            if entry is None:
+                return json.dumps(
+                    {"error": f"Server '{server_name}' not found in trust registry."}
+                )
+            return json.dumps(entry.to_dict(), indent=2)
+
+        entries = registry.list(trust_level=trust_level)
+        return json.dumps(
+            {
+                "count": len(entries),
+                "servers": [e.to_dict() for e in entries],
+            },
+            indent=2,
+        )
 
     return app
 
