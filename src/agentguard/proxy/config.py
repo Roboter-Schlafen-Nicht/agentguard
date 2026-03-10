@@ -25,6 +25,9 @@ class ProxyConfig:
         load_builtins: Whether to load built-in policies.
         auto_discover: Whether to auto-discover policies from
             standard locations.
+        preset: Named protection level preset to load
+            (``"strict"``, ``"balanced"``, or ``"permissive"``).
+            Mutually exclusive with ``load_builtins``.
         scan_responses: Whether to also scan upstream responses
             against policies. Default False (only scan requests).
         timeout: Timeout in seconds for upstream requests.
@@ -45,6 +48,7 @@ class ProxyConfig:
     actor: str = "llm-proxy"
     load_builtins: bool = False
     auto_discover: bool = False
+    preset: str | None = None
     scan_responses: bool = False
     timeout: float = 120.0
     allowed_endpoints: list[str] = field(default_factory=list)

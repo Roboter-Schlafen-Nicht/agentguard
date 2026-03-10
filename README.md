@@ -63,7 +63,7 @@ pip install agentguard[mcp]
   "mcpServers": {
     "agentguard": {
       "command": "python",
-      "args": ["-m", "agentguard", "serve", "--builtins", "--audit-dir", "audit/"]
+      "args": ["-m", "agentguard", "serve", "--preset", "balanced", "--audit-dir", "audit/"]
     }
   }
 }
@@ -297,9 +297,11 @@ content = provider.extract_stream_content(sse_data)
 ### MCP Sidecar Tools
 
 The MCP server exposes `agentguard_status` (loaded policies and
-session info) and `agentguard_audit_query` (search audit by action,
-result, or actor) — so you can ask the agent "what policies are
-active?" or "show me all denied actions."
+session info), `agentguard_audit_query` (search audit by action,
+result, or actor), `agentguard_trust_query` (look up server trust
+levels), and `agentguard_scan_package` (scan a package for security
+risks) — so you can ask the agent "what policies are active?", "show
+me all denied actions", or "scan this MCP server before I install it."
 
 ### MCP Action Tools
 
@@ -315,6 +317,105 @@ MCP server provides:
 
 All 7 action tools enforce policies and log to the audit trail.
 
+### Protection Level Presets
+
+Named policy bundles for quick setup. Three levels trade security for
+agent flexibility:
+
+| Preset | Policies | Use case |
+|--------|:---:|---|
+| `permissive` | 3 | Development — blocks only catastrophic actions |
+| `balanced` | 8 | Default — covers tools and basic LLM filtering |
+| `strict` | 11 | Production — all policies including drift detection |
+
+```bash
+# CLI — mutually exclusive with --builtins
+agentguard serve --preset balanced --audit-dir audit/
+
+# MCP config
+{
+  "args": ["-m", "agentguard", "serve", "--preset", "strict", "--audit-dir", "audit/"]
+}
+```
+
+```python
+from agentguard import Preset, load_preset
+
+policies = load_preset(Preset.BALANCED)
+# Returns 8 Policy objects ready to load into a Guard
+```
+
+### Trust Registry
+
+Persistent trust levels for MCP servers with hash-based integrity
+verification. Track which servers are trusted, restricted, or
+untrusted, and verify package integrity before execution.
+
+```bash
+# Register a server with a trust level
+agentguard trust add my-server --level trusted \
+  --package-path /path/to/server --command "python -m my_server"
+
+# Verify package integrity
+agentguard trust verify my-server --package-path /path/to/server
+
+# List all registered servers
+agentguard trust list --format json
+```
+
+```python
+from agentguard import TrustRegistry, TrustLevel
+
+registry = TrustRegistry()
+registry.add("my-server", TrustLevel.TRUSTED,
+             package_path="/path/to/server",
+             command="python -m my_server")
+
+entry = registry.get("my-server")
+assert entry.verify_hash("/path/to/server")  # True — package unchanged
+```
+
+Trust data persists in `~/.agentguard/trust-registry.yaml`. The MCP
+server exposes `agentguard_trust_query` for agent-accessible lookups.
+
+### Package Scanner
+
+On-demand static analysis of MCP server source code. Regex-based
+line-by-line detection across 6 risk categories with 22+ built-in
+rules:
+
+| Category | Examples |
+|----------|---------|
+| Data exfiltration | HTTP requests, WebSockets, DNS, SMTP, base64 encoding |
+| File system access | Sensitive paths (`/etc/passwd`, `.ssh/`), recursive walks, `.env` |
+| Code execution | `eval`/`exec`, subprocess, ctypes, dynamic imports |
+| Credential access | Hardcoded keys, environment variable lookups, keyring access |
+| Persistence | Cron jobs, startup files, systemd, runtime pip install |
+| Obfuscation | Hex decoding, character-by-character construction, marshal |
+
+```bash
+agentguard scan /path/to/mcp-server-package
+agentguard scan /path/to/package --format json --min-severity high
+```
+
+```python
+from agentguard import Scanner
+
+scanner = Scanner()
+result = scanner.scan("/path/to/mcp-server-package")
+print(result.finding_count, result.max_severity)
+
+for finding in result.findings:
+    print(f"[{finding.severity.value}] {finding.rule_id}: {finding.message}")
+    print(f"  at {finding.file_path}:{finding.line_number}")
+```
+
+> **Caveat:** The scanner is a **safety net for first-pass triage**, not
+> a security boundary. Regex-based detection is bypassable by
+> adversarial code via string concatenation, encoding, or indirection.
+> It catches accidental risks and low-sophistication threats, but should
+> not be relied on as a sole defence against malicious packages.
+
 ## CLI
 
 ```
@@ -324,8 +425,15 @@ agentguard check ACTION [--params K=V ...]  Test an action against policies
 agentguard audit verify FILE                Verify audit log integrity
 agentguard audit query FILE [--action ...]  Query audit entries
 agentguard report FRAMEWORK FILE            Generate compliance report
-agentguard serve [--builtins] [--audit-dir]  Start MCP server
+agentguard serve [--builtins|--preset LEVEL] Start MCP server
 agentguard proxy URL [--scan-responses]     Start LLM API proxy
+agentguard scan PATH [--format FMT]         Scan a package for security risks
+agentguard trust add NAME [--level LEVEL]   Register a server in trust registry
+agentguard trust remove NAME                Remove a server
+agentguard trust list [--level LEVEL]        List registered servers
+agentguard trust show NAME                  Show server details
+agentguard trust verify NAME --package-path  Verify package integrity
+agentguard trust update-hash NAME           Recompute stored hash
 ```
 
 ## Installation
@@ -350,13 +458,15 @@ Requires Python 3.10+. Tested on 3.10, 3.11, 3.12, and 3.13.
 
 ```
 src/agentguard/
-  policies/         Policy engine: Rule, Guard, YAML loader, 11 built-in policies
+  policies/         Policy engine: Rule, Guard, YAML loader, 11 built-in policies, presets
   audit/            Audit logging: hash-chained JSONL, integrity verification
   guardrails/       Runtime interceptor: Guardrail, hooks, ActionResult
   compliance/       Report generators: EU AI Act, JSON/text renderers
   mcp/              MCP server: transparent tool proxy with policy enforcement
   proxy/            LLM API proxy: middleware, outbound/inbound scanners
     providers/      Format adapters: Provider protocol, OpenAI adapter
+  scanner/          Package scanner: regex-based source code analysis, 6 risk categories
+  trust/            Trust registry: trust levels, hash verification, YAML persistence
   cli.py            Command-line interface
 ```
 
@@ -369,7 +479,7 @@ src/agentguard/
 5. **Streaming-aware** — scans SSE responses in real time, terminates on violation
 6. **Extensible** — YAML policies, pluggable providers, pluggable interceptors
 7. **Type-safe** — full mypy strict compliance, py.typed marker
-8. **Tested** — 927 tests, TDD, CI on Python 3.10–3.13
+8. **Tested** — 1182 tests, TDD, CI on Python 3.10–3.13
 
 ## Roadmap
 
@@ -384,6 +494,9 @@ src/agentguard/
 - [x] Streaming inbound scanner (SSE sliding window, mid-stream termination)
 - [x] Built-in prompt/response policies (4 proxy policies)
 - [x] OpenAI-compatible provider adapter with auto-detection
+- [x] Protection level presets (`strict` / `balanced` / `permissive`)
+- [x] Trust registry for MCP servers (trust levels, hash verification)
+- [x] MCP server package scanner (on-demand source code audit)
 - [ ] Anthropic provider adapter
 - [ ] Audit log rotation, retention, and cross-session aggregation
 - [ ] ISO 42001 and NIST AI RMF compliance reports

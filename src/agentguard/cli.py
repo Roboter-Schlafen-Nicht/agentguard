@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from agentguard.audit.log import AuditLog
     from agentguard.audit.models import AuditEntry
+    from agentguard.trust.registry import TrustRegistry
 
 try:
     from agentguard.mcp.server import create_server
@@ -43,6 +44,7 @@ class _Parsers:
         self.top: argparse.ArgumentParser | None = None
         self.policies: argparse.ArgumentParser | None = None
         self.audit: argparse.ArgumentParser | None = None
+        self.trust: argparse.ArgumentParser | None = None
 
 
 _parsers = _Parsers()
@@ -163,10 +165,145 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_parser = subparsers.add_parser(
         "serve", help="Start the AgentGuard MCP server."
     )
+
+    # --- trust ---
+    trust_parser = subparsers.add_parser(
+        "trust", help="Manage the MCP server trust registry."
+    )
+    trust_sub = trust_parser.add_subparsers(dest="trust_command")
+
+    _parsers.trust = trust_parser
+
+    # trust add
+    trust_add = trust_sub.add_parser(
+        "add", help="Add or update a server in the registry."
+    )
+    trust_add.add_argument("name", help="Unique server name.")
+    trust_add.add_argument(
+        "--level",
+        required=True,
+        choices=["trusted", "restricted", "untrusted"],
+        help="Trust level to assign.",
+    )
+    trust_add.add_argument(
+        "--package-path",
+        help="Path to the server package (computes integrity hash).",
+    )
+    trust_add.add_argument("--notes", help="Optional notes.")
+    trust_add.add_argument(
+        "--registry",
+        help="Path to the trust registry YAML file.",
+    )
+
+    # trust remove
+    trust_rm = trust_sub.add_parser("remove", help="Remove a server from the registry.")
+    trust_rm.add_argument("name", help="Server name to remove.")
+    trust_rm.add_argument(
+        "--registry",
+        help="Path to the trust registry YAML file.",
+    )
+
+    # trust list
+    trust_ls = trust_sub.add_parser("list", help="List servers in the registry.")
+    trust_ls.add_argument(
+        "--level",
+        choices=["trusted", "restricted", "untrusted"],
+        help="Filter by trust level.",
+    )
+    trust_ls.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+    trust_ls.add_argument(
+        "--registry",
+        help="Path to the trust registry YAML file.",
+    )
+
+    # trust show
+    trust_show = trust_sub.add_parser("show", help="Show details of a server entry.")
+    trust_show.add_argument("name", help="Server name.")
+    trust_show.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+    trust_show.add_argument(
+        "--registry",
+        help="Path to the trust registry YAML file.",
+    )
+
+    # trust verify
+    trust_verify = trust_sub.add_parser(
+        "verify", help="Verify a server package against its stored hash."
+    )
+    trust_verify.add_argument("name", help="Server name.")
+    trust_verify.add_argument(
+        "--package-path",
+        required=True,
+        help="Path to the server package to verify.",
+    )
+    trust_verify.add_argument(
+        "--registry",
+        help="Path to the trust registry YAML file.",
+    )
+
+    # trust update-hash
+    trust_uh = trust_sub.add_parser(
+        "update-hash", help="Recompute and store the hash for a server package."
+    )
+    trust_uh.add_argument("name", help="Server name.")
+    trust_uh.add_argument(
+        "--package-path",
+        required=True,
+        help="Path to the server package.",
+    )
+    trust_uh.add_argument(
+        "--registry",
+        help="Path to the trust registry YAML file.",
+    )
+    # --- scan ---
+    scan_parser = subparsers.add_parser(
+        "scan", help="Scan an MCP server package for security risks."
+    )
+    scan_parser.add_argument(
+        "path",
+        help="Path to the package directory or single file to scan.",
+    )
+    scan_parser.add_argument(
+        "--format",
+        choices=["text", "json", "summary"],
+        default="text",
+        help="Output format (default: text).",
+    )
+    scan_parser.add_argument(
+        "--min-severity",
+        choices=["critical", "high", "medium", "low", "info"],
+        default=None,
+        help="Only show findings at or above this severity.",
+    )
+    scan_parser.add_argument(
+        "--colour",
+        "--color",
+        action="store_true",
+        default=False,
+        dest="colour",
+        help="Enable ANSI colour output (text format only).",
+    )
+
     serve_parser.add_argument(
         "--builtins",
         action="store_true",
         help="Load all built-in policies.",
+    )
+    serve_parser.add_argument(
+        "--preset",
+        choices=["strict", "balanced", "permissive"],
+        help=(
+            "Load a named protection level preset (mutually exclusive with --builtins)."
+        ),
     )
     serve_parser.add_argument(
         "--auto-discover",
@@ -185,6 +322,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--actor",
         default="agent",
         help="Actor name for audit entries (default: agent).",
+    )
+    serve_parser.add_argument(
+        "--trust-registry",
+        help="Path to the trust registry YAML file.",
     )
 
     # --- report ---
@@ -230,6 +371,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--builtins",
         action="store_true",
         help="Load all built-in policies.",
+    )
+    proxy_parser.add_argument(
+        "--preset",
+        choices=["strict", "balanced", "permissive"],
+        help=(
+            "Load a named protection level preset (mutually exclusive with --builtins)."
+        ),
     )
     proxy_parser.add_argument(
         "--auto-discover",
@@ -487,6 +635,193 @@ def _cmd_audit_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _get_registry(args: argparse.Namespace) -> TrustRegistry:
+    """Build a TrustRegistry from the --registry flag (or default)."""
+    from agentguard.trust.registry import TrustRegistry
+
+    reg_path = getattr(args, "registry", None)
+    return TrustRegistry(path=reg_path)
+
+
+def _cmd_trust_add(args: argparse.Namespace) -> int:
+    """Add or update a server in the trust registry."""
+    registry = _get_registry(args)
+    is_update = registry.get(args.name) is not None
+    try:
+        entry = registry.add(
+            server_name=args.name,
+            trust_level=args.level,
+            package_path=getattr(args, "package_path", None),
+            notes=getattr(args, "notes", None),
+        )
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    action = "Updated" if is_update else "Added"
+    print(f"{action}: {entry.server_name} (level={entry.trust_level.value})")
+    if entry.package_hash:
+        print(f"  Hash: {entry.package_hash[:16]}...")
+    return 0
+
+
+def _cmd_trust_remove(args: argparse.Namespace) -> int:
+    """Remove a server from the trust registry."""
+    registry = _get_registry(args)
+    try:
+        entry = registry.remove(args.name)
+    except KeyError:
+        print(
+            f"Error: Server '{args.name}' not found in trust registry.", file=sys.stderr
+        )
+        return 1
+    print(f"Removed: {entry.server_name}")
+    return 0
+
+
+def _cmd_trust_list(args: argparse.Namespace) -> int:
+    """List servers in the trust registry."""
+    registry = _get_registry(args)
+    level = getattr(args, "level", None)
+    entries = registry.list(trust_level=level)
+
+    if args.format == "json":
+        print(json.dumps([e.to_dict() for e in entries], indent=2))
+    else:
+        if not entries:
+            print("No servers in trust registry.")
+            return 0
+        print(f"Trust registry ({len(entries)} entries):")
+        for entry in entries:
+            hash_info = (
+                f"  hash={entry.package_hash[:12]}..."
+                if entry.package_hash
+                else "  no hash"
+            )
+            print(f"  {entry.server_name:<30} {entry.trust_level.value:<12}{hash_info}")
+    return 0
+
+
+def _cmd_trust_show(args: argparse.Namespace) -> int:
+    """Show details of a single trust registry entry."""
+    registry = _get_registry(args)
+    entry = registry.get(args.name)
+    if entry is None:
+        print(
+            f"Error: Server '{args.name}' not found in trust registry.", file=sys.stderr
+        )
+        return 1
+
+    if args.format == "json":
+        print(json.dumps(entry.to_dict(), indent=2))
+    else:
+        print(f"Server: {entry.server_name}")
+        print(f"Trust level: {entry.trust_level.value}")
+        print(f"Hash algorithm: {entry.hash_algorithm}")
+        print(f"Package hash: {entry.package_hash or 'not set'}")
+        print(f"Capabilities: {entry.capabilities or 'none'}")
+        print(f"Added: {entry.added_at.isoformat()}")
+        print(f"Updated: {entry.updated_at.isoformat()}")
+        if entry.notes:
+            print(f"Notes: {entry.notes}")
+    return 0
+
+
+def _cmd_trust_verify(args: argparse.Namespace) -> int:
+    """Verify a server package against its stored hash."""
+    registry = _get_registry(args)
+    try:
+        result = registry.verify(args.name, args.package_path)
+    except KeyError:
+        print(
+            f"Error: Server '{args.name}' not found in trust registry.", file=sys.stderr
+        )
+        return 1
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if result:
+        print(f"PASS: Package integrity verified for '{args.name}'.")
+        return 0
+    else:
+        entry = registry.get(args.name)
+        if entry and entry.package_hash is None:
+            print(
+                f"FAIL: No hash stored for '{args.name}'."
+                " Run 'trust update-hash' first."
+            )
+        else:
+            print(
+                f"FAIL: Package integrity check FAILED"
+                f" for '{args.name}'."
+                " Package may have been modified."
+            )
+        return 1
+
+
+def _cmd_trust_update_hash(args: argparse.Namespace) -> int:
+    """Recompute and store the hash for a server package."""
+    registry = _get_registry(args)
+    try:
+        entry = registry.update_hash(args.name, args.package_path)
+    except KeyError:
+        print(
+            f"Error: Server '{args.name}' not found in trust registry.", file=sys.stderr
+        )
+        return 1
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    print(
+        f"Updated hash for '{entry.server_name}': {(entry.package_hash or '')[:16]}..."
+    )
+    return 0
+
+
+def _cmd_scan(args: argparse.Namespace) -> int:
+    """Scan an MCP server package for security risks."""
+    from agentguard.scanner import (
+        Scanner,
+        Severity,
+        format_json,
+        format_summary,
+        format_text,
+    )
+
+    scanner = Scanner()
+    try:
+        result = scanner.scan(args.path)
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    # Apply minimum severity filter if requested.
+    if args.min_severity is not None:
+        sev_order = {
+            Severity.CRITICAL: 4,
+            Severity.HIGH: 3,
+            Severity.MEDIUM: 2,
+            Severity.LOW: 1,
+            Severity.INFO: 0,
+        }
+        threshold = sev_order[Severity(args.min_severity)]
+        result.findings = [
+            f for f in result.findings if sev_order[f.severity] >= threshold
+        ]
+
+    fmt = getattr(args, "format", "text")
+    if fmt == "json":
+        print(format_json(result))
+    elif fmt == "summary":
+        print(format_summary(result))
+    else:
+        print(format_text(result, colour=args.colour))
+
+    # Exit with 1 if any findings remain after filtering.
+    return 1 if result.findings else 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Start the AgentGuard MCP server."""
     if create_server is None:
@@ -505,6 +840,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         )
         return 1
 
+    preset = getattr(args, "preset", None)
+    if preset is not None and args.builtins:
+        print(
+            "Error: Cannot use both --preset and --builtins. Choose one.",
+            file=sys.stderr,
+        )
+        return 1
+
     try:
         app = create_server(
             policy_dir=policy_dir,
@@ -512,6 +855,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             actor=args.actor,
             load_builtins=args.builtins,
             auto_discover=args.auto_discover,
+            preset=preset,
+            trust_registry=getattr(args, "trust_registry", None),
         )
         app.run()
     except ImportError:
@@ -579,6 +924,14 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
     try:
         from agentguard.proxy.config import ProxyConfig
 
+        preset = getattr(args, "preset", None)
+        if preset is not None and args.builtins:
+            print(
+                "Error: Cannot use both --preset and --builtins. Choose one.",
+                file=sys.stderr,
+            )
+            return 1
+
         config = ProxyConfig(
             upstream_base_url=args.upstream,
             host=args.host,
@@ -588,6 +941,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             actor=args.actor,
             load_builtins=args.builtins,
             auto_discover=args.auto_discover,
+            preset=preset,
             scan_responses=args.scan_responses,
             timeout=args.timeout,
         )
@@ -643,6 +997,26 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "check":
         return _cmd_check(args)
+
+    if args.command == "trust":
+        if args.trust_command == "add":
+            return _cmd_trust_add(args)
+        if args.trust_command == "remove":
+            return _cmd_trust_remove(args)
+        if args.trust_command == "list":
+            return _cmd_trust_list(args)
+        if args.trust_command == "show":
+            return _cmd_trust_show(args)
+        if args.trust_command == "verify":
+            return _cmd_trust_verify(args)
+        if args.trust_command == "update-hash":
+            return _cmd_trust_update_hash(args)
+        if _parsers.trust is not None:
+            _parsers.trust.print_help()
+        return 1
+
+    if args.command == "scan":
+        return _cmd_scan(args)
 
     if args.command == "serve":
         return _cmd_serve(args)

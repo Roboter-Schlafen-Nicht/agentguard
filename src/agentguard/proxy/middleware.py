@@ -67,6 +67,16 @@ class GuardMiddleware:
         """Build a Guard instance from the config."""
         guard = Guard()
 
+        if self.config.preset is not None and self.config.load_builtins:
+            msg = "Cannot use both --preset and --builtins. Choose one."
+            raise ValueError(msg)
+
+        if self.config.preset is not None:
+            from agentguard.policies.presets import load_preset
+
+            for policy in load_preset(self.config.preset):
+                guard.add_policy(policy)
+
         if self.config.policy_dir is not None:
             policy_path = Path(self.config.policy_dir)
             if not policy_path.is_dir():
