@@ -248,6 +248,24 @@ class TestTrustEntryHashing:
         expected.update(b"x")
         assert h == expected.hexdigest()
 
+    def test_compute_hash_uses_posix_paths(self, tmp_path: Path) -> None:
+        """Hash uses POSIX forward-slash separators regardless of OS.
+
+        This ensures hashes are deterministic across platforms —
+        a package hashed on Windows must verify on Linux and vice versa.
+        Regression test for #93.
+        """
+        pkg = tmp_path / "pkg"
+        (pkg / "a" / "b" / "c").mkdir(parents=True)
+        (pkg / "a" / "b" / "c" / "deep.py").write_text("deep", encoding="utf-8")
+        h = TrustEntry.compute_hash(str(pkg))
+
+        # Manually compute expected hash with forward-slash path
+        expected = hashlib.sha256()
+        expected.update(b"path:a/b/c/deep.py\x00")
+        expected.update(b"deep")
+        assert h == expected.hexdigest()
+
     def test_compute_hash_nonexistent_raises(self) -> None:
         with pytest.raises(FileNotFoundError):
             TrustEntry.compute_hash("/nonexistent/path")

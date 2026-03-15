@@ -393,3 +393,131 @@ class TestCLIAuditReport:
         out = capsys.readouterr().out
         assert "FAILED" in out or "failed" in out
         assert "bad-sess" in out
+
+    def test_after_flag_filters_entries(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--after excludes entries before the cutoff.
+
+        Regression test for #105.
+        """
+        from agentguard.cli import main
+
+        old = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        new = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        _create_session(
+            tmp_path, "old-s", [{"action": "a", "result": "allowed"}], base_time=old
+        )
+        _create_session(
+            tmp_path, "new-s", [{"action": "b", "result": "allowed"}], base_time=new
+        )
+        rc = main(
+            [
+                "audit",
+                "report",
+                str(tmp_path),
+                "--after",
+                "2026-01-01T00:00:00",
+                "--format",
+                "json",
+            ]
+        )
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["total_entries"] == 1
+        assert data["actions_by_type"] == {"b": 1}
+
+    def test_before_flag_filters_entries(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--before excludes entries after the cutoff.
+
+        Regression test for #105.
+        """
+        from agentguard.cli import main
+
+        old = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        new = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        _create_session(
+            tmp_path, "old-s", [{"action": "a", "result": "allowed"}], base_time=old
+        )
+        _create_session(
+            tmp_path, "new-s", [{"action": "b", "result": "allowed"}], base_time=new
+        )
+        rc = main(
+            [
+                "audit",
+                "report",
+                str(tmp_path),
+                "--before",
+                "2026-01-01T00:00:00",
+                "--format",
+                "json",
+            ]
+        )
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["total_entries"] == 1
+        assert data["actions_by_type"] == {"a": 1}
+
+    def test_after_and_before_combined(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--after and --before can be combined to select a time window.
+
+        Regression test for #105.
+        """
+        from agentguard.cli import main
+
+        t1 = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        t2 = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        t3 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        _create_session(
+            tmp_path, "s1", [{"action": "x", "result": "allowed"}], base_time=t1
+        )
+        _create_session(
+            tmp_path, "s2", [{"action": "y", "result": "allowed"}], base_time=t2
+        )
+        _create_session(
+            tmp_path, "s3", [{"action": "z", "result": "allowed"}], base_time=t3
+        )
+        rc = main(
+            [
+                "audit",
+                "report",
+                str(tmp_path),
+                "--after",
+                "2025-03-01T00:00:00",
+                "--before",
+                "2025-12-01T00:00:00",
+                "--format",
+                "json",
+            ]
+        )
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["total_entries"] == 1
+        assert data["actions_by_type"] == {"y": 1}
+
+    def test_invalid_after_format_exits_with_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--after with invalid datetime format exits with error.
+
+        Regression test for #105.
+        """
+        from agentguard.cli import main
+
+        _create_session(tmp_path, "s1", [{"action": "a"}])
+        rc = main(
+            [
+                "audit",
+                "report",
+                str(tmp_path),
+                "--after",
+                "not-a-date",
+            ]
+        )
+        assert rc == 1
+        err = capsys.readouterr().err.lower()
+        assert "invalid" in err or "format" in err or "error" in err

@@ -338,8 +338,19 @@ def create_server(
             raise _tool_error(denial)
 
         file_path = Path(path)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8")
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8")
+        except OSError as exc:
+            audit_log.record(
+                action="file_write",
+                actor=actor,
+                target=path,
+                result="error",
+                metadata={"error": str(exc)},
+            )
+            _save_audit()
+            raise _tool_error(f"Write error: {exc}") from None
 
         byte_length = len(content.encode("utf-8"))
 
@@ -551,7 +562,8 @@ def create_server(
 
         # Sort by modification time (most recent first), then cap at 100
         matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        capped = len(matches) > 100
+        total_matches = len(matches)
+        capped = total_matches > 100
         matches = matches[:100]
 
         audit_log.record(
@@ -561,7 +573,7 @@ def create_server(
             result="allowed",
             metadata={
                 "pattern": pattern,
-                "match_count": str(len(matches)),
+                "match_count": str(total_matches),
             },
         )
         _save_audit()

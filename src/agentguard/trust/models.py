@@ -119,7 +119,7 @@ class TrustEntry:
             for root, _dirs, files in sorted(os.walk(target)):
                 for fname in sorted(files):
                     fpath = _Path(root) / fname
-                    rel = str(fpath.relative_to(target))
+                    rel = fpath.relative_to(target).as_posix()
                     h.update(f"path:{rel}\x00".encode())
                     h.update(fpath.read_bytes())
 

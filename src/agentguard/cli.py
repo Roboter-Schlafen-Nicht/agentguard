@@ -174,6 +174,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default="text",
         help="Output format (default: text).",
     )
+    audit_report_parser.add_argument(
+        "--after",
+        help="Only include entries after this ISO-8601 timestamp.",
+    )
+    audit_report_parser.add_argument(
+        "--before",
+        help="Only include entries before this ISO-8601 timestamp.",
+    )
 
     # --- serve ---
     serve_parser = subparsers.add_parser(
@@ -664,6 +672,8 @@ def _cmd_audit_query(args: argparse.Namespace) -> int:
 
 def _cmd_audit_report(args: argparse.Namespace) -> int:
     """Generate a cross-session audit report."""
+    from datetime import datetime, timezone
+
     from agentguard.audit.report import generate_cross_session_report
 
     directory = Path(args.directory)
@@ -671,7 +681,23 @@ def _cmd_audit_report(args: argparse.Namespace) -> int:
         print(f"Error: Audit directory not found: {args.directory}", file=sys.stderr)
         return 1
 
-    report = generate_cross_session_report(directory)
+    kwargs: dict[str, datetime] = {}
+    for flag in ("after", "before"):
+        raw = getattr(args, flag, None)
+        if raw is not None:
+            try:
+                dt = datetime.fromisoformat(raw)
+            except ValueError:
+                print(
+                    f"Error: Invalid --{flag} timestamp format: {raw!r}",
+                    file=sys.stderr,
+                )
+                return 1
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            kwargs[flag] = dt
+
+    report = generate_cross_session_report(directory, **kwargs)
 
     if args.format == "json":
         print(json.dumps(report.to_dict(), indent=2))

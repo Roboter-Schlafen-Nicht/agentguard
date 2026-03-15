@@ -235,3 +235,9 @@ class TestScanningDisabled:
         body = resp.json()
         assert body["choices"][0]["message"]["content"] == "Sure!"
         assert len(mock_upstream.requests) == 1
+
+        # Verify audit: request is allowed even with dangerous content
+        entries = _audit_entries(audit_dir)
+        request_entries = [e for e in entries if e.get("action") == "llm_request"]
+        assert len(request_entries) == 1
+        assert request_entries[0]["result"] == "allowed"

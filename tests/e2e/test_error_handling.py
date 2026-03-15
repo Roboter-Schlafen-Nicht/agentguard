@@ -118,6 +118,16 @@ class TestFileWriteErrors:
                 text = _get_text(result).lower()
                 assert "permission" in text or "denied" in text or "error" in text
 
+                # Verify audit entry records the error (#189)
+                audit_result = await session.call_tool(
+                    "agentguard_audit_query",
+                    {"action": "file_write"},
+                )
+                entries = json.loads(_get_text(audit_result))
+                error_entries = [e for e in entries if e.get("result") == "error"]
+                assert len(error_entries) == 1
+                assert error_entries[0]["target"] == str(target)
+
             await _with_server(check, audit_dir=audit_dir)
         finally:
             os.chmod(readonly_dir, 0o755)
