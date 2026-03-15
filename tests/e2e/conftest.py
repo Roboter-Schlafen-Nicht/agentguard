@@ -263,14 +263,14 @@ def auth_json_file(tmp_path: Path) -> Path:
 
     The file follows the OpenCode auth format::
 
-        {"github-copilot": {"token": "test-token-12345"}}
+        {"github-copilot": {"refresh": "test-token-12345"}}
 
     Returns:
         Path to the auth.json file.
     """
     auth_path = tmp_path / "auth.json"
     auth_data = {
-        "github-copilot": {"token": "test-token-12345"},
+        "github-copilot": {"refresh": "test-token-12345"},
     }
     auth_path.write_text(json.dumps(auth_data))
     return auth_path

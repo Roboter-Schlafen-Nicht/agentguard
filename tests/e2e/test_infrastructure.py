@@ -128,7 +128,7 @@ class TestAuthJsonFile:
         """Auth file contains expected token structure."""
         data = json.loads(auth_json_file.read_text())
         assert "github-copilot" in data
-        assert data["github-copilot"]["token"] == "test-token-12345"
+        assert data["github-copilot"]["refresh"] == "test-token-12345"
 
 
 class TestRsnPolicies:
