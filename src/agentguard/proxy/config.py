@@ -37,8 +37,8 @@ class ProxyConfig:
             are proxied.
         provider: Name of the LLM API provider adapter to use
             for parsing request/response bodies (e.g. ``"openai"``).
-            If None, defaults to ``"openai"`` (most LLM APIs use
-            the OpenAI-compatible format).
+            If None, falls back to the legacy ``scanner`` module
+            which uses OpenAI-compatible format parsing.
         auth_file: Path to a JSON auth credentials file. When set,
             the proxy reads a Bearer token from this file and
             injects it into the ``Authorization`` header of upstream

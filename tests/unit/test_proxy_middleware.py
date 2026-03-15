@@ -494,24 +494,24 @@ class TestStreamingDetection:
         """Request with stream=True should be detected."""
         mw = GuardMiddleware(base_config)
         body = json.dumps({"stream": True, "messages": []}).encode()
-        assert mw._is_streaming_request(body) is True
+        assert mw._is_streaming_request(mw._parse_body(body)) is True
 
     def test_non_streaming_request_detected(self, base_config: ProxyConfig) -> None:
         """Request without stream should not be detected as streaming."""
         mw = GuardMiddleware(base_config)
         body = json.dumps({"messages": []}).encode()
-        assert mw._is_streaming_request(body) is False
+        assert mw._is_streaming_request(mw._parse_body(body)) is False
 
     def test_stream_false_not_streaming(self, base_config: ProxyConfig) -> None:
         """Request with stream=False should not be streaming."""
         mw = GuardMiddleware(base_config)
         body = json.dumps({"stream": False, "messages": []}).encode()
-        assert mw._is_streaming_request(body) is False
+        assert mw._is_streaming_request(mw._parse_body(body)) is False
 
     def test_non_json_not_streaming(self, base_config: ProxyConfig) -> None:
         """Non-JSON body should not be streaming."""
         mw = GuardMiddleware(base_config)
-        assert mw._is_streaming_request(b"not json") is False
+        assert mw._is_streaming_request(mw._parse_body(b"not json")) is False
 
 
 # ===========================================================================
@@ -1419,3 +1419,187 @@ class TestAuthFileTokenInjection:
                 auth_file=str(auth),
             )
             GuardMiddleware(config)
+
+
+# ===========================================================================
+# Test: Structured content in _extract_body_stats (#31)
+# ===========================================================================
+
+
+class TestExtractBodyStatsStructuredContent:
+    """Test _extract_body_stats handles OpenAI structured content blocks."""
+
+    def test_string_content_counted(self, base_config: ProxyConfig) -> None:
+        """String message content should be included in token estimate."""
+        mw = GuardMiddleware(base_config)
+        body = json.dumps(
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "user", "content": "Hello world"},
+                ],
+            }
+        ).encode()
+        count, tokens = mw._extract_body_stats(mw._parse_body(body))
+        assert count == 1
+        assert tokens > 0
+
+    def test_structured_content_blocks_counted(self, base_config: ProxyConfig) -> None:
+        """Structured content blocks should be counted."""
+        mw = GuardMiddleware(base_config)
+        body = json.dumps(
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Describe this image"},
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://example.com/img.png"},
+                            },
+                        ],
+                    },
+                ],
+            }
+        ).encode()
+        count, tokens = mw._extract_body_stats(mw._parse_body(body))
+        assert count == 1
+        # "Describe this image" should contribute to tokens
+        assert tokens > 0
+
+    def test_mixed_string_and_structured_content(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Mix of string and structured content messages both counted."""
+        mw = GuardMiddleware(base_config)
+        body = json.dumps(
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {"role": "system", "content": "You are helpful."},
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "What is this?"},
+                        ],
+                    },
+                ],
+            }
+        ).encode()
+        count, tokens = mw._extract_body_stats(mw._parse_body(body))
+        assert count == 2
+        assert tokens > 0
+
+    def test_structured_content_without_text_key(
+        self, base_config: ProxyConfig
+    ) -> None:
+        """Structured blocks without 'text' key contribute no tokens."""
+        mw = GuardMiddleware(base_config)
+        body = json.dumps(
+            {
+                "model": "gpt-4",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://example.com/img.png"},
+                            },
+                        ],
+                    },
+                ],
+            }
+        ).encode()
+        count, tokens = mw._extract_body_stats(mw._parse_body(body))
+        assert count == 1
+        assert tokens == 0
+
+
+# ===========================================================================
+# Test: _forward_streaming resource cleanup on failure (#28)
+# ===========================================================================
+
+
+class TestForwardStreamingResourceCleanup:
+    """Test that _forward_streaming cleans up client on send() failure."""
+
+    @pytest.mark.anyio
+    async def test_client_closed_on_send_error(self, base_config: ProxyConfig) -> None:
+        """If client.send() raises, the AsyncClient should still be closed."""
+        import httpx
+
+        mw = GuardMiddleware(base_config)
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.build_request.return_value = MagicMock()
+        mock_client.send = AsyncMock(
+            side_effect=httpx.ConnectError("Connection refused")
+        )
+        mock_client.timeout = mw.config.timeout
+
+        with (
+            patch("httpx.AsyncClient", return_value=mock_client),
+            pytest.raises(httpx.ConnectError),
+        ):
+            await mw._forward_streaming("POST", "https://example.com", {}, b"")
+
+        # Client must be closed even though send() raised
+        mock_client.aclose.assert_awaited_once()
+
+
+# ===========================================================================
+# Test: Streaming audit on iteration failure (#37)
+# ===========================================================================
+
+
+class TestStreamingAuditOnIterationFailure:
+    """Test that audit is recorded even when stream iteration fails."""
+
+    @pytest.mark.anyio
+    async def test_audit_recorded_on_stream_error(
+        self, response_policy_dir: Path
+    ) -> None:
+        """If aiter_lines() raises during iteration, audit should still be recorded."""
+        config = ProxyConfig(
+            upstream_base_url="https://api.openai.com",
+            policy_dir=str(response_policy_dir),
+            scan_responses=True,
+        )
+        mw = GuardMiddleware(config)
+        request = _make_request(body=_openai_request_body(stream=True))
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-type": "text/event-stream"}
+
+        # SSE stream that raises mid-iteration
+        async def failing_aiter_lines():
+            yield 'data: {"choices": [{"delta": {"content": "Hello"}}]}'
+            raise ConnectionError("upstream disconnected")
+
+        mock_response.aiter_lines = failing_aiter_lines
+
+        mock_client = AsyncMock()
+        stream_ctx = _StreamContext(client=mock_client, response=mock_response)
+
+        with patch.object(mw, "_forward_streaming", return_value=stream_ctx):
+            response = await mw.handle_request(request)
+
+        assert response.status_code == 200
+
+        # Consume the streaming body — should handle the error
+        body_chunks = []
+        with pytest.raises(ConnectionError):
+            async for chunk in response.body_iterator:
+                body_chunks.append(chunk)
+
+        # Even though iteration failed, audit should have an entry
+        # for the response (recorded with error status)
+        response_entries = [
+            e for e in mw.audit_log.entries if e.action == "llm_response"
+        ]
+        assert len(response_entries) == 1
+        assert response_entries[0].result == "error"
