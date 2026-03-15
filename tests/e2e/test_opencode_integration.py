@@ -18,14 +18,16 @@ Test matrix:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import anyio
 import pytest
-from mcp import ClientSession
+
+from tests.e2e.conftest import _get_text, _with_server
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mcp import ClientSession
 
 
 # ---------------------------------------------------------------------------
@@ -70,20 +72,6 @@ rules:
 
 
 @pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    """Create a temp directory for audit logs."""
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
-
-
-@pytest.fixture()
 def auto_discover_policy_dir(tmp_path: Path) -> Path:
     """Create a .agentguard/policies/ directory with an RSN policy.
 
@@ -96,66 +84,6 @@ def auto_discover_policy_dir(tmp_path: Path) -> Path:
     ag_dir.mkdir(parents=True)
     (ag_dir / "rsn-no-private-commit.yaml").write_text(_RSN_NO_PRIVATE_COMMIT)
     return project_root
-
-
-# ---------------------------------------------------------------------------
-# Helper: run a function against an in-process MCP server
-# ---------------------------------------------------------------------------
-
-
-def _get_text(result: Any) -> str:
-    """Extract text from an MCP CallToolResult."""
-    return result.content[0].text  # type: ignore[no-any-return]
-
-
-async def _with_server(
-    fn: Any,
-    *,
-    audit_dir: Path | None = None,
-    preset: str = "permissive",
-    actor: str = "opencode-agent",
-    auto_discover: bool = False,
-    policy_dir: Path | None = None,
-) -> None:
-    """Spin up an AgentGuard MCP server and run *fn(session)*.
-
-    Mirrors the real OpenCode sidecar configuration:
-    ``agentguard serve --preset <preset> --auto-discover --audit-dir <dir>``.
-
-    Uses anyio memory streams — no real I/O or OpenCode binary needed.
-    """
-    from agentguard.mcp.server import create_server
-
-    app = create_server(
-        preset=preset,
-        audit_dir=str(audit_dir) if audit_dir else None,
-        actor=actor,
-        auto_discover=auto_discover,
-        policy_dir=str(policy_dir) if policy_dir else None,
-    )
-
-    server = app._mcp_server
-
-    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
-    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
-
-    async with anyio.create_task_group() as tg:
-
-        async def run_server() -> None:
-            await server.run(
-                c2s_recv,
-                s2c_send,
-                server.create_initialization_options(),
-            )
-
-        async def run_client() -> None:
-            async with ClientSession(s2c_recv, c2s_send) as session:
-                await session.initialize()
-                await fn(session)
-                tg.cancel_scope.cancel()
-
-        tg.start_soon(run_server)
-        tg.start_soon(run_client)
 
 
 # ===========================================================================
@@ -176,7 +104,9 @@ class TestToolDiscovery:
             missing = EXPECTED_TOOLS - tool_names
             assert not missing, f"Missing tools: {missing}"
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_1_no_unexpected_tools(self, audit_dir: Path) -> None:
@@ -188,7 +118,9 @@ class TestToolDiscovery:
             extra = tool_names - EXPECTED_TOOLS
             assert not extra, f"Unexpected extra tools: {extra}"
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_1_tool_count_is_11(self, audit_dir: Path) -> None:
@@ -201,7 +133,9 @@ class TestToolDiscovery:
                 f"{[t.name for t in tools_result.tools]}"
             )
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
 
 class TestFileWorkflow:
@@ -238,7 +172,9 @@ class TestFileWorkflow:
             assert "def hello()" in _get_text(read_result)
             assert "Hello, world!" in _get_text(read_result)
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
         # Verify file exists on disk
         assert target.exists()
@@ -278,7 +214,9 @@ class TestFileWorkflow:
             assert len(read_entries) >= 1
             assert read_entries[-1]["result"] == "allowed"
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
 
 class TestShellWorkflow:
@@ -296,7 +234,9 @@ class TestShellWorkflow:
             assert not result.isError, f"shell_execute failed: {_get_text(result)}"
             assert "agent running" in _get_text(result)
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_3_shell_command_audited(self, audit_dir: Path) -> None:
@@ -317,7 +257,9 @@ class TestShellWorkflow:
             assert entries[-1]["result"] == "allowed"
             assert "python3 --version" in entries[-1]["target"]
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
 
 class TestPolicyEnforcement:
@@ -345,7 +287,9 @@ class TestPolicyEnforcement:
             assert result.isError, "Expected denial but tool succeeded"
             assert "denied by policy" in _get_text(result)
 
-        await _with_server(check, audit_dir=audit_dir, preset="balanced")
+        await _with_server(
+            check, audit_dir=audit_dir, preset="balanced", actor="opencode-agent"
+        )
 
         # File must NOT exist on disk
         assert not target.exists()
@@ -377,7 +321,9 @@ class TestPolicyEnforcement:
             assert len(denied_entries) >= 1
             assert denied_entries[-1]["action"] == "file_write"
 
-        await _with_server(check, audit_dir=audit_dir, preset="balanced")
+        await _with_server(
+            check, audit_dir=audit_dir, preset="balanced", actor="opencode-agent"
+        )
 
 
 class TestAutoDiscover:
@@ -407,6 +353,7 @@ class TestAutoDiscover:
                 check,
                 audit_dir=audit_dir,
                 preset="permissive",
+                actor="opencode-agent",
                 auto_discover=True,
             )
         finally:
@@ -451,6 +398,7 @@ class TestAutoDiscover:
                 check,
                 audit_dir=audit_dir,
                 preset="permissive",
+                actor="opencode-agent",
                 auto_discover=True,
             )
         finally:
@@ -519,7 +467,9 @@ class TestAuditAccumulation:
                 "shell_execute",
             ]
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_6_hash_chain_valid_after_session(
@@ -544,7 +494,9 @@ class TestAuditAccumulation:
                 {"command": "echo step-3"},
             )
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
         # Load persisted audit log and verify hash chain
         jsonl_files = list(audit_dir.glob("*.jsonl"))
@@ -575,7 +527,9 @@ class TestStatusTool:
             assert status["policies_loaded"] >= 3
             assert len(status["policy_names"]) >= 3
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_7_status_reflects_preset_policies(
@@ -593,7 +547,9 @@ class TestStatusTool:
             assert "no-force-push" in policy_names
             assert "no-secret-in-prompt" in policy_names
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_7_status_shows_audit_count(self, audit_dir: Path) -> None:
@@ -621,4 +577,6 @@ class TestStatusTool:
             # initial status call + 2 shell_execute calls = +3 minimum
             assert status2.get("audit_entries", 0) > initial_count
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(
+            check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
+        )

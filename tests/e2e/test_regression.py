@@ -14,167 +14,26 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-import anyio
 import httpx
 import pytest
-from mcp import ClientSession
 
 from agentguard.audit.log import AuditLog
 from agentguard.policies.presets import PRESET_POLICIES, Preset
-from agentguard.proxy.app import create_app
-from agentguard.proxy.config import ProxyConfig
-from agentguard.proxy.middleware import _StreamContext
+from tests.e2e.conftest import (
+    _chat_body,
+    _create_proxy,
+    _fake_sk_key,
+    _fake_sk_proj_key,
+    _get_text,
+    _with_server,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from mcp import ClientSession
+
     from tests.e2e.conftest import MockUpstream
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_text(result: Any) -> str:
-    return result.content[0].text  # type: ignore[no-any-return]
-
-
-def _fake_sk_key(body: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345678901234") -> str:
-    """Build a fake ``sk-`` key at runtime to avoid safety scanner."""
-    return "sk" + "-" + body
-
-
-def _fake_sk_proj_key(
-    body: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
-) -> str:
-    """Build a fake ``sk-proj-`` key at runtime to avoid safety scanner."""
-    return "sk" + "-" + "proj" + "-" + body
-
-
-async def _with_server(
-    fn: Any,
-    *,
-    audit_dir: Path | None = None,
-    actor: str = "test-agent",
-    preset: str | None = None,
-) -> None:
-    """Spin up an AgentGuard MCP server in-process and run *fn(session)*."""
-    from agentguard.mcp.server import create_server
-
-    kwargs: dict[str, Any] = {
-        "audit_dir": str(audit_dir) if audit_dir else None,
-        "actor": actor,
-        "load_builtins": False,
-    }
-    if preset is not None:
-        kwargs["preset"] = preset
-
-    app = create_server(**kwargs)
-    server = app._mcp_server
-
-    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
-    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
-
-    async with anyio.create_task_group() as tg:
-
-        async def run_server() -> None:
-            await server.run(
-                c2s_recv,
-                s2c_send,
-                server.create_initialization_options(),
-            )
-
-        async def run_client() -> None:
-            async with ClientSession(s2c_recv, c2s_send) as session:
-                await session.initialize()
-                await fn(session)
-                tg.cancel_scope.cancel()
-
-        tg.start_soon(run_server)
-        tg.start_soon(run_client)
-
-
-def _create_proxy(
-    mock_upstream: MockUpstream,
-    audit_dir: Path,
-    *,
-    preset: str | None = None,
-    load_builtins: bool = False,
-    scan_responses: bool = False,
-) -> Any:
-    """Build a proxy app wired to the mock upstream."""
-    config = ProxyConfig(
-        upstream_base_url="http://mock-upstream",
-        audit_dir=str(audit_dir),
-        preset=preset,
-        load_builtins=load_builtins,
-        scan_responses=scan_responses,
-    )
-    app = create_app(config)
-    middleware = app.state.middleware
-    transport = httpx.ASGITransport(app=mock_upstream.app)
-
-    async def _patched_forward_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> Any:
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://mock-upstream"
-        ) as client:
-            return await client.request(
-                method=method, url=url, headers=headers, content=body
-            )
-
-    async def _patched_forward_streaming(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> _StreamContext:
-        client = httpx.AsyncClient(transport=transport, base_url="http://mock-upstream")
-        try:
-            response = await client.send(
-                client.build_request(
-                    method=method, url=url, headers=headers, content=body
-                ),
-                stream=True,
-            )
-        except Exception:
-            await client.aclose()
-            raise
-        return _StreamContext(client=client, response=response)
-
-    middleware._forward_request = _patched_forward_request
-    middleware._forward_streaming = _patched_forward_streaming
-
-    return app
-
-
-def _chat_body(content: str) -> dict[str, Any]:
-    return {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-    }
 
 
 # ===========================================================================
@@ -307,33 +166,15 @@ class TestR5AuthTokenInjected:
             json.dumps({"github-copilot": {"refresh": "test-refresh-token"}})
         )
 
-        config = ProxyConfig(
-            upstream_base_url="http://mock-upstream",
-            audit_dir=str(audit_dir),
+        proxy_app = _create_proxy(
+            mock_upstream,
+            audit_dir,
             auth_file=str(auth_path),
             auth_provider="github-copilot",
         )
-        app = create_app(config)
-        middleware = app.state.middleware
-        transport = httpx.ASGITransport(app=mock_upstream.app)
-
-        async def _patched_forward_request(
-            method: str,
-            url: str,
-            headers: dict[str, str],
-            body: bytes,
-        ) -> Any:
-            async with httpx.AsyncClient(
-                transport=transport, base_url="http://mock-upstream"
-            ) as client:
-                return await client.request(
-                    method=method, url=url, headers=headers, content=body
-                )
-
-        middleware._forward_request = _patched_forward_request
 
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+            transport=httpx.ASGITransport(app=proxy_app),
             base_url="http://proxy",
         ) as client:
             await client.post(
@@ -523,14 +364,10 @@ class TestR11UpstreamConnectionFailure:
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
 
-        config = ProxyConfig(
-            upstream_base_url="http://mock-upstream",
-            audit_dir=str(audit_dir),
-        )
-        app = create_app(config)
-        middleware = app.state.middleware
+        proxy_app = _create_proxy(mock_upstream, audit_dir)
+        middleware = proxy_app.state.middleware
 
-        # Patch forwarding to simulate upstream connection failure
+        # Override forwarding to simulate upstream connection failure
         async def _failing_forward(
             method: str,
             url: str,
@@ -543,7 +380,7 @@ class TestR11UpstreamConnectionFailure:
         middleware._forward_streaming = _failing_forward
 
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
+            transport=httpx.ASGITransport(app=proxy_app),
             base_url="http://proxy",
         ) as client:
             resp = await client.post(

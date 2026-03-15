@@ -15,87 +15,16 @@ Test matrix:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import anyio
 import pytest
-from mcp import ClientSession
+
+from tests.e2e.conftest import _get_text, _with_server
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    """Create a temp directory for audit logs."""
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_text(result: Any) -> str:
-    """Extract text from an MCP CallToolResult."""
-    return result.content[0].text  # type: ignore[no-any-return]
-
-
-async def _with_server(
-    fn: Any,
-    *,
-    audit_dir: Path | None = None,
-    preset: str = "balanced",
-    actor: str = "test-agent",
-) -> None:
-    """Spin up an AgentGuard MCP server with a preset and run *fn(session)*.
-
-    Uses anyio memory streams so no real I/O is needed.
-    The server is cancelled once *fn* returns.
-    """
-    from agentguard.mcp.server import create_server
-
-    app = create_server(
-        preset=preset,
-        audit_dir=str(audit_dir) if audit_dir else None,
-        actor=actor,
-    )
-
-    server = app._mcp_server
-
-    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
-    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
-
-    async with anyio.create_task_group() as tg:
-
-        async def run_server() -> None:
-            await server.run(
-                c2s_recv,
-                s2c_send,
-                server.create_initialization_options(),
-            )
-
-        async def run_client() -> None:
-            async with ClientSession(s2c_recv, c2s_send) as session:
-                await session.initialize()
-                await fn(session)
-                tg.cancel_scope.cancel()
-
-        tg.start_soon(run_server)
-        tg.start_soon(run_client)
+    from mcp import ClientSession
 
 
 # ===========================================================================

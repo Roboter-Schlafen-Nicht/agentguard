@@ -18,33 +18,21 @@ Test matrix:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import anyio
 import pytest
-from mcp import ClientSession
+
+from tests.e2e.conftest import _with_server
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mcp import ClientSession
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    """Create a temp directory for audit logs."""
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
 
 
 @pytest.fixture()
@@ -68,57 +56,6 @@ def file_edit_secret_policy_dir(tmp_path: Path) -> Path:
         "    severity: critical\n"
     )
     return d
-
-
-# ---------------------------------------------------------------------------
-# Helper: run a function against an in-process MCP server
-# ---------------------------------------------------------------------------
-
-
-async def _with_server(
-    fn: Any,
-    *,
-    policy_dir: Path | None = None,
-    audit_dir: Path | None = None,
-    actor: str = "test-agent",
-    builtins: bool = False,
-) -> None:
-    """Spin up an AgentGuard MCP server in-process and run fn(session).
-
-    Uses anyio memory streams so no real I/O is needed.
-    The server is cancelled once fn returns.
-    """
-    from agentguard.mcp.server import create_server
-
-    app = create_server(
-        policy_dir=str(policy_dir) if policy_dir else None,
-        audit_dir=str(audit_dir) if audit_dir else None,
-        actor=actor,
-        load_builtins=builtins,
-    )
-
-    server = app._mcp_server
-
-    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
-    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
-
-    async with anyio.create_task_group() as tg:
-
-        async def run_server() -> None:
-            await server.run(
-                c2s_recv,
-                s2c_send,
-                server.create_initialization_options(),
-            )
-
-        async def run_client() -> None:
-            async with ClientSession(s2c_recv, c2s_send) as session:
-                await session.initialize()
-                await fn(session)
-                tg.cancel_scope.cancel()
-
-        tg.start_soon(run_server)
-        tg.start_soon(run_client)
 
 
 # ===========================================================================
@@ -151,7 +88,7 @@ class TestFileWritePolicy:
             assert "denied by policy" in error_text
             assert not target.exists(), "File should not be written when denied"
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
     @pytest.mark.anyio()
     async def test_sg_1_2_clean_write_allowed(
@@ -171,7 +108,7 @@ class TestFileWritePolicy:
             assert target.exists()
             assert target.read_text() == "Hello, world!\n"
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
 
 class TestFileEditPolicy:
@@ -232,7 +169,7 @@ class TestFileEditPolicy:
             assert "New content" in target.read_text()
             assert "Old content" not in target.read_text()
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
 
 class TestFileReadAudit:
@@ -265,7 +202,7 @@ class TestFileReadAudit:
             assert read_entry["action"] == "file_read"
             assert read_entry["result"] == "allowed"
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
 
 class TestFileGlob:
@@ -296,7 +233,7 @@ class TestFileGlob:
             # Verify capped message is present
             assert any("capped" in ln.lower() for ln in lines)
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
 
 class TestFileGrep:
@@ -325,7 +262,7 @@ class TestFileGrep:
             text = result.content[0].text  # type: ignore[union-attr]
             assert "hello" in text
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
 
 class TestFileList:
@@ -352,4 +289,4 @@ class TestFileList:
             assert "README.md" in text
             assert "src/" in text
 
-        await _with_server(check, builtins=True, audit_dir=audit_dir)
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)

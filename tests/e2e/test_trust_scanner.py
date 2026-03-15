@@ -17,36 +17,23 @@ Test matrix:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-import anyio
 import pytest
-from mcp import ClientSession
 
 from agentguard.trust.models import TrustLevel
 from agentguard.trust.registry import TrustRegistry
+from tests.e2e.conftest import _get_text, _with_server
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from mcp import ClientSession
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    """Create a temp directory for audit logs."""
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
 
 
 @pytest.fixture()
@@ -93,65 +80,6 @@ def clean_package(tmp_path: Path) -> Path:
     return pkg
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_text(result: Any) -> str:
-    """Extract text from an MCP CallToolResult."""
-    return result.content[0].text  # type: ignore[no-any-return]
-
-
-async def _with_server(
-    fn: Any,
-    *,
-    audit_dir: Path | None = None,
-    preset: str = "permissive",
-    actor: str = "test-agent",
-    trust_registry: str | None = None,
-) -> None:
-    """Spin up an AgentGuard MCP server and run *fn(session)*.
-
-    Uses anyio memory streams so no real I/O is needed.
-    The server is cancelled once *fn* returns.
-    """
-    from agentguard.mcp.server import create_server
-
-    kwargs: dict[str, Any] = {
-        "preset": preset,
-        "actor": actor,
-    }
-    if audit_dir is not None:
-        kwargs["audit_dir"] = str(audit_dir)
-    if trust_registry is not None:
-        kwargs["trust_registry"] = trust_registry
-
-    app = create_server(**kwargs)
-    server = app._mcp_server
-
-    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
-    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
-
-    async with anyio.create_task_group() as tg:
-
-        async def run_server() -> None:
-            await server.run(
-                c2s_recv,
-                s2c_send,
-                server.create_initialization_options(),
-            )
-
-        async def run_client() -> None:
-            async with ClientSession(s2c_recv, c2s_send) as session:
-                await session.initialize()
-                await fn(session)
-                tg.cancel_scope.cancel()
-
-        tg.start_soon(run_server)
-        tg.start_soon(run_client)
-
-
 # ===========================================================================
 # SG-8 Tests: Trust registry and package scanner
 # ===========================================================================
@@ -192,6 +120,7 @@ class TestTrustRegisterServer:
         await _with_server(
             check,
             audit_dir=audit_dir,
+            preset="permissive",
             trust_registry=str(registry_path),
         )
 
@@ -270,7 +199,7 @@ class TestScanFindsRisks:
             categories = {f["category"] for f in data["findings"]}
             assert "code-execution" in categories
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(check, audit_dir=audit_dir, preset="permissive")
 
 
 class TestScanMinSeverityFilter:
@@ -317,7 +246,7 @@ class TestScanMinSeverityFilter:
             for finding in high_data["findings"]:
                 assert finding["severity"] in ("high", "critical")
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(check, audit_dir=audit_dir, preset="permissive")
 
 
 class TestScanCleanPackage:
@@ -343,7 +272,7 @@ class TestScanCleanPackage:
             assert data["max_severity"] is None
             assert data["files_scanned"] >= 1
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(check, audit_dir=audit_dir, preset="permissive")
 
 
 class TestTrustQueryMcpTool:
@@ -395,6 +324,7 @@ class TestTrustQueryMcpTool:
         await _with_server(
             check,
             audit_dir=audit_dir,
+            preset="permissive",
             trust_registry=str(registry_path),
         )
 
@@ -448,4 +378,4 @@ class TestScanMcpTool:
             bad_data = json.loads(_get_text(result_bad))
             assert "error" in bad_data
 
-        await _with_server(check, audit_dir=audit_dir)
+        await _with_server(check, audit_dir=audit_dir, preset="permissive")
