@@ -113,9 +113,14 @@ class TrustEntry:
             h.update(target.read_bytes())
         else:
             # Hash every file in sorted order for determinism.
+            # Include relative file paths so that renaming a file
+            # changes the hash — prevents an attacker from swapping
+            # file names while keeping the overall digest identical.
             for root, _dirs, files in sorted(os.walk(target)):
                 for fname in sorted(files):
                     fpath = _Path(root) / fname
+                    rel = str(fpath.relative_to(target))
+                    h.update(f"path:{rel}\x00".encode())
                     h.update(fpath.read_bytes())
 
         return h.hexdigest()

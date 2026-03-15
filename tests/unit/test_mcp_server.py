@@ -1665,6 +1665,63 @@ class TestTrustQueryTool:
 
         await with_server(check, trust_registry=str(reg_file))
 
+    @pytest.mark.anyio
+    @pytest.mark.skipif(
+        hasattr(__import__("os"), "getuid") and __import__("os").getuid() == 0,
+        reason="root ignores file permissions — chmod(0o000) has no effect",
+    )
+    async def test_query_handles_unreadable_registry(self, tmp_path: Path) -> None:
+        """Trust query returns an error when the registry file is unreadable.
+
+        Verifies the narrowed exception handling (#72) still catches
+        OSError from permission-denied files.
+        """
+        reg_file = tmp_path / "trust.yaml"
+        reg_file.write_text("version: 1\nservers: {}")
+        reg_file.chmod(0o000)
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_trust_query", {})
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert "error" in data
+            assert "Cannot load trust registry" in data["error"]
+
+        try:
+            await with_server(check, trust_registry=str(reg_file))
+        finally:
+            reg_file.chmod(0o644)
+
+    @pytest.mark.anyio
+    async def test_query_handles_invalid_trust_level_in_registry(
+        self, tmp_path: Path
+    ) -> None:
+        """Trust query returns an error for invalid trust level values.
+
+        A registry file with bogus trust_level values should be caught
+        by the narrowed exception handling (#72).
+        """
+        reg_file = tmp_path / "trust.yaml"
+        reg_file.write_text(
+            "version: 1\n"
+            "servers:\n"
+            "  bad-server:\n"
+            "    server_name: bad-server\n"
+            "    trust_level: bogus_level\n"
+            "    added_at: '2025-01-01T00:00:00+00:00'\n"
+            "    updated_at: '2025-01-01T00:00:00+00:00'\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool("agentguard_trust_query", {})
+            import json
+
+            data = json.loads(result.content[0].text)
+            assert "error" in data
+
+        await with_server(check, trust_registry=str(reg_file))
+
 
 # ===========================================================================
 # Test: Scan package MCP tool
