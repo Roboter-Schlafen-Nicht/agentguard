@@ -198,15 +198,14 @@ Cline allows custom API base URLs in its extension settings:
 
 ## VS Code Copilot
 
-VS Code Copilot routes through GitHub's infrastructure. Use the
-system-level proxy setting:
-
-1. Start the proxy on the appropriate port
-2. In VS Code settings: `"http.proxy": "http://127.0.0.1:8080"`
-3. Or set the `HTTPS_PROXY` environment variable
-
-> **Note:** This routes ALL VS Code HTTP traffic through the proxy,
-> not just LLM calls. Use with caution.
+> **Limitation:** GitHub Copilot does not expose a configurable API
+> endpoint. AgentGuard's proxy is a **reverse proxy** (forwarding to a
+> specific upstream), not a forward/CONNECT proxy, so VS Code's
+> `http.proxy` setting will not work for this purpose.
+>
+> For Copilot protection, use the **MCP server** layer instead — it
+> intercepts tool calls regardless of the LLM provider. See
+> [Combining with MCP Server](#combining-with-mcp-server) below.
 
 ---
 
