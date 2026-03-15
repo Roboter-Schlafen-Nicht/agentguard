@@ -453,9 +453,9 @@ class TestAuditAccumulation:
                 {},
             )
             entries = json.loads(_get_text(result))
-            # 4 tool calls above; the query itself may also appear
-            assert len(entries) >= 4, (
-                f"Expected at least 4 audit entries, got {len(entries)}"
+            # 4 tool calls above; audit_query does not record itself
+            assert len(entries) == 4, (
+                f"Expected exactly 4 audit entries, got {len(entries)}"
             )
 
             # Verify chronological action sequence
@@ -574,7 +574,7 @@ class TestStatusTool:
             # Check count has increased
             result2 = await session.call_tool("agentguard_status", {})
             status2 = json.loads(_get_text(result2))
-            # initial status call + 2 shell_execute calls = +3 minimum
+            # 2 shell_execute calls = +2 (status does not record audit)
             assert status2.get("audit_entries", 0) > initial_count
 
         await _with_server(

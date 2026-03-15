@@ -120,8 +120,8 @@ class TestMCPBlocksShellWhileProxyAllowsClean:
         # Verify separate JSONL files
         mcp_files = list(audit_dir.glob("ag-*.jsonl"))
         proxy_files = list(audit_dir.glob("proxy-*.jsonl"))
-        assert len(mcp_files) == 1, "Expected at least one MCP audit file"
-        assert len(proxy_files) == 1, "Expected at least one proxy audit file"
+        assert len(mcp_files) == 1, "Expected exactly one MCP audit file"
+        assert len(proxy_files) == 1, "Expected exactly one proxy audit file"
 
         # Verify audit content
         mcp_entries = _mcp_audit_entries(audit_dir)

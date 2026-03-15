@@ -162,8 +162,7 @@ class TestAutoDiscoverProjectLocal:
         project_policy_dir = tmp_path / ".agentguard" / "policies"
         _write_policy_file(project_policy_dir, "custom.yaml", _VALID_POLICY_YAML)
 
-        monkeypatch.chdir(tmp_path)
-
+        # No monkeypatch.chdir needed: project_dir is passed explicitly
         policies = discover_policies(project_dir=project_policy_dir)
 
         assert len(policies) == 1

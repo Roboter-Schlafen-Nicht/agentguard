@@ -224,8 +224,8 @@ class TestScanMinSeverityFilter:
             all_severities = {f["severity"] for f in all_data["findings"]}
 
             # Confirm we have mixed severities (medium and higher)
-            assert "medium" in all_severities or "low" in all_severities, (
-                "Test requires mixed severities to validate filtering"
+            assert "medium" in all_severities, (
+                "Test requires medium severity to validate filtering"
             )
 
             # Now scan with min_severity=high

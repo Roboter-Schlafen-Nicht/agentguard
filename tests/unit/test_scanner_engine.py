@@ -319,6 +319,7 @@ class TestSymlinkHandling:
         # Only the file under real_dir should be found
         assert result.finding_count == 1
         assert "real_dir" in result.findings[0].file_path
+        assert "link_dir" not in result.findings[0].file_path
 
     def test_symlink_to_outside_package_is_skipped(self, tmp_path: Path) -> None:
         """Symlinks pointing outside the package root are skipped."""
