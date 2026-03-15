@@ -25,7 +25,12 @@ pytestmark = pytest.mark.integration
 
 
 def _get_tool_fn(server, name: str):
-    """Extract a registered tool function from FastMCP server."""
+    """Extract a registered tool function from FastMCP server.
+
+    NOTE: This accesses the private ``server._tool_manager`` attribute,
+    coupling these tests to FastMCP internals.  If the library changes
+    the attribute name, these tests will need updating.
+    """
     # FastMCP ToolManager exposes get_tool(name) method
     tool_manager = server._tool_manager
     tool = tool_manager.get_tool(name)

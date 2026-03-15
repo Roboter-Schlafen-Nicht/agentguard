@@ -479,6 +479,49 @@ class TestFileGlob:
         await with_server(check)
 
     @pytest.mark.anyio
+    async def test_glob_returns_most_recent_files_when_capped(
+        self, tmp_path: Path
+    ) -> None:
+        """When >100 files exist, should return the 100 most recent (#57).
+
+        The cap must be applied AFTER sorting by mtime so that the
+        result contains the 100 most recently modified files, not an
+        arbitrary 100 from filesystem iteration order.
+        """
+        import time
+
+        # Create 105 "old" files in a subdir named 'aaa' (sorted first)
+        old_dir = tmp_path / "aaa"
+        old_dir.mkdir()
+        for i in range(105):
+            (old_dir / f"old_{i:03d}.txt").write_text(f"old {i}")
+
+        time.sleep(0.05)  # ensure mtime gap
+
+        # Create 5 "new" files in a subdir named 'zzz' (sorted last).
+        # Without the fix, glob would cap at 100 old files and miss these.
+        new_dir = tmp_path / "zzz"
+        new_dir.mkdir()
+        newest_names: set[str] = set()
+        for i in range(5):
+            f = new_dir / f"new_{i}.txt"
+            f.write_text(f"new {i}")
+            newest_names.add(f"new_{i}.txt")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_glob",
+                {"pattern": "**/*.txt", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            # All 5 "new_*" files must appear (they're the newest)
+            for name in newest_names:
+                assert name in text, f"Expected newest file {name} in results"
+
+        await with_server(check)
+
+    @pytest.mark.anyio
     async def test_glob_is_audited(self, tmp_path: Path, audit_dir: Path) -> None:
         """Glob actions should appear in the audit log."""
         (tmp_path / "test.py").write_text("# test")
@@ -697,6 +740,36 @@ class TestFileGrep:
             # Output should be capped
             lines = [ln for ln in text.strip().split("\n") if ln.strip()]
             assert len(lines) <= 110  # some overhead for headers
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_grep_stops_walking_after_cap(self, tmp_path: Path) -> None:
+        """os.walk loop should stop after 100 matches are found (#58).
+
+        Create >100 matches spread across subdirectories. Verify the
+        result reports the correct count and shows the truncation msg.
+        """
+        # Put 50 matches in subdir_a, 55 in subdir_b
+        for sub, count in [("a", 50), ("b", 55)]:
+            d = tmp_path / f"subdir_{sub}"
+            d.mkdir()
+            for i in range(count):
+                (d / f"file_{i:03d}.txt").write_text(f"matchme line {i}")
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "file_grep",
+                {"pattern": "matchme", "path": str(tmp_path)},
+            )
+            assert not result.isError
+            text = result.content[0].text  # type: ignore[union-attr]
+            # Should report exactly 100 matches shown
+            lines = [ln for ln in text.strip().split("\n") if "matchme" in ln]
+            assert len(lines) == 100
+            # Should have a truncation message
+            assert "100" in text
+            assert "Showing 100 of" in text
 
         await with_server(check)
 

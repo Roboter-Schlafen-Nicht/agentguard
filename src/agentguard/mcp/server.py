@@ -538,8 +538,6 @@ def create_server(
             for p in search_dir.glob(pattern):
                 if p.is_file():
                     matches.append(p)
-                    if len(matches) >= 100:
-                        break
         except (OSError, ValueError) as exc:
             audit_log.record(
                 action="file_glob",
@@ -551,8 +549,10 @@ def create_server(
             _save_audit()
             raise _tool_error(f"Glob error: {exc}") from None
 
-        # Sort by modification time (most recent first)
+        # Sort by modification time (most recent first), then cap at 100
         matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        capped = len(matches) > 100
+        matches = matches[:100]
 
         audit_log.record(
             action="file_glob",
@@ -571,7 +571,7 @@ def create_server(
 
         lines = [str(m) for m in matches]
         result_text = "\n".join(lines)
-        if len(matches) >= 100:
+        if capped:
             result_text += (
                 "\n(Results capped at 100. Narrow your pattern "
                 "for more specific results.)"
@@ -677,6 +677,8 @@ def create_server(
                             break
                 if match_count > 100:
                     break
+            if match_count > 100:
+                break
 
         audit_log.record(
             action="file_grep",
