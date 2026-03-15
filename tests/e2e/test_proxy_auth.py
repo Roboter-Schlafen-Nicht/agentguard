@@ -28,7 +28,10 @@ import pytest
 
 from agentguard.proxy.app import create_app
 from agentguard.proxy.config import ProxyConfig
-from agentguard.proxy.middleware import _StreamContext
+from tests.e2e.conftest import (
+    _chat_body,
+    _create_proxy,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,86 +44,10 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _create_proxy_with_auth(
-    mock_upstream: MockUpstream,
-    tmp_path: Path,
-    *,
-    auth_file: str | None = None,
-    auth_provider: str = "github-copilot",
-) -> Any:
-    """Build a proxy app wired to the mock upstream with optional auth.
-
-    Returns the Starlette app.  The middleware's forwarding methods are
-    monkey-patched to route through ASGI transport pointing at the mock.
-    """
-    audit_dir = tmp_path / "audit"
-    audit_dir.mkdir(exist_ok=True)
-
-    config = ProxyConfig(
-        upstream_base_url="http://mock-upstream",
-        audit_dir=str(audit_dir),
-        load_builtins=True,
-        scan_responses=True,
-        auth_file=auth_file,
-        auth_provider=auth_provider,
-    )
-    app = create_app(config)
-    middleware = app.state.middleware
-    transport = httpx.ASGITransport(app=mock_upstream.app)
-
-    async def _patched_forward_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> Any:
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://mock-upstream"
-        ) as client:
-            return await client.request(
-                method=method, url=url, headers=headers, content=body
-            )
-
-    async def _patched_forward_streaming(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> _StreamContext:
-        client = httpx.AsyncClient(transport=transport, base_url="http://mock-upstream")
-        try:
-            response = await client.send(
-                client.build_request(
-                    method=method, url=url, headers=headers, content=body
-                ),
-                stream=True,
-            )
-        except Exception:
-            await client.aclose()
-            raise
-        return _StreamContext(client=client, response=response)
-
-    middleware._forward_request = _patched_forward_request
-    middleware._forward_streaming = _patched_forward_streaming
-
-    return app
-
-
 def _write_auth_file(path: Path, data: Any) -> Path:
     """Write auth data to a JSON file and return the path."""
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
-
-
-def _chat_body(content: str = "Hello", *, stream: bool = False) -> dict[str, Any]:
-    """Build a minimal chat completion request body."""
-    body: dict[str, Any] = {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-    }
-    if stream:
-        body["stream"] = True
-    return body
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +59,7 @@ def _chat_body(content: str = "Hello", *, stream: bool = False) -> dict[str, Any
 async def test_auth_token_replaces_client_header(
     mock_upstream: MockUpstream,
     tmp_path: Path,
+    audit_dir: Path,
 ) -> None:
     """The proxy replaces the client's Authorization header with the
     token from auth.json.  The upstream should never see the client's
@@ -141,7 +69,13 @@ async def test_auth_token_replaces_client_header(
         tmp_path / "auth.json",
         {"github-copilot": {"refresh": "injected-server-token"}},
     )
-    app = _create_proxy_with_auth(mock_upstream, tmp_path, auth_file=str(auth_path))
+    app = _create_proxy(
+        mock_upstream,
+        audit_dir,
+        load_builtins=True,
+        scan_responses=True,
+        auth_file=str(auth_path),
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -169,6 +103,7 @@ async def test_auth_token_replaces_client_header(
 async def test_refresh_field_used_for_oauth(
     mock_upstream: MockUpstream,
     tmp_path: Path,
+    audit_dir: Path,
 ) -> None:
     """When both 'refresh' and 'key' are present, 'refresh' takes
     priority (OAuth flow).
@@ -183,7 +118,13 @@ async def test_refresh_field_used_for_oauth(
             }
         },
     )
-    app = _create_proxy_with_auth(mock_upstream, tmp_path, auth_file=str(auth_path))
+    app = _create_proxy(
+        mock_upstream,
+        audit_dir,
+        load_builtins=True,
+        scan_responses=True,
+        auth_file=str(auth_path),
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -208,15 +149,18 @@ async def test_refresh_field_used_for_oauth(
 async def test_key_field_fallback(
     mock_upstream: MockUpstream,
     tmp_path: Path,
+    audit_dir: Path,
 ) -> None:
     """When only 'key' is present (no 'refresh'), the key field is used."""
     auth_path = _write_auth_file(
         tmp_path / "auth.json",
         {"anthropic": {"type": "api", "key": "sk-ant-api-key"}},
     )
-    app = _create_proxy_with_auth(
+    app = _create_proxy(
         mock_upstream,
-        tmp_path,
+        audit_dir,
+        load_builtins=True,
+        scan_responses=True,
         auth_file=str(auth_path),
         auth_provider="anthropic",
     )
@@ -243,12 +187,18 @@ async def test_key_field_fallback(
 @pytest.mark.anyio
 async def test_no_auth_file_preserves_client_token(
     mock_upstream: MockUpstream,
-    tmp_path: Path,
+    audit_dir: Path,
 ) -> None:
     """Without auth_file configured, the client's original Authorization
     header is forwarded to the upstream unchanged.
     """
-    app = _create_proxy_with_auth(mock_upstream, tmp_path, auth_file=None)
+    app = _create_proxy(
+        mock_upstream,
+        audit_dir,
+        load_builtins=True,
+        scan_responses=True,
+        auth_file=None,
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -322,6 +272,7 @@ def test_missing_provider_key_raises(tmp_path: Path) -> None:
 async def test_token_not_hot_reloaded(
     mock_upstream: MockUpstream,
     tmp_path: Path,
+    audit_dir: Path,
 ) -> None:
     """The auth token is loaded once at startup and NOT reloaded when the
     file changes.  This is a known limitation (issue #88).
@@ -333,7 +284,13 @@ async def test_token_not_hot_reloaded(
         tmp_path / "auth.json",
         {"github-copilot": {"refresh": "original-token"}},
     )
-    app = _create_proxy_with_auth(mock_upstream, tmp_path, auth_file=str(auth_path))
+    app = _create_proxy(
+        mock_upstream,
+        audit_dir,
+        load_builtins=True,
+        scan_responses=True,
+        auth_file=str(auth_path),
+    )
 
     transport = httpx.ASGITransport(app=app)
 
@@ -438,7 +395,7 @@ async def test_upstream_failure_audit_entry(
 @pytest.mark.anyio
 async def test_non_200_upstream_forwarded(
     mock_upstream: MockUpstream,
-    tmp_path: Path,
+    audit_dir: Path,
 ) -> None:
     """When the upstream returns a non-200 status (e.g. 429 rate limit),
     the proxy forwards the status code and body to the client.
@@ -448,7 +405,13 @@ async def test_non_200_upstream_forwarded(
         status=429,
     )
 
-    app = _create_proxy_with_auth(mock_upstream, tmp_path, auth_file=None)
+    app = _create_proxy(
+        mock_upstream,
+        audit_dir,
+        load_builtins=True,
+        scan_responses=True,
+        auth_file=None,
+    )
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),

@@ -27,6 +27,13 @@ import pytest
 from agentguard.proxy.app import create_app
 from agentguard.proxy.config import ProxyConfig
 from agentguard.proxy.middleware import _StreamContext
+from tests.e2e.conftest import (
+    _chat_body,
+    _parse_sse_events,
+    _sse_chunk,
+    _sse_done_chunk,
+    _streaming_body,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -36,72 +43,6 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
     from tests.e2e.conftest import MockUpstream
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _sse_chunk(content: str, index: int = 0) -> str:
-    """Build an OpenAI-format SSE chunk payload (raw JSON string)."""
-    return json.dumps(
-        {
-            "id": f"chatcmpl-{index}",
-            "object": "chat.completion.chunk",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": content},
-                    "finish_reason": None,
-                }
-            ],
-        }
-    )
-
-
-def _sse_done_chunk() -> str:
-    """Build an OpenAI-format SSE final chunk (finish_reason=stop)."""
-    return json.dumps(
-        {
-            "id": "chatcmpl-final",
-            "object": "chat.completion.chunk",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }
-            ],
-        }
-    )
-
-
-def _streaming_body(content: str = "Hello") -> dict[str, Any]:
-    """Build a minimal streaming chat completion request body."""
-    return {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-        "stream": True,
-    }
-
-
-def _non_streaming_body(content: str = "Hello") -> dict[str, Any]:
-    """Build a minimal non-streaming chat completion request body."""
-    return {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-    }
-
-
-def _parse_sse_events(raw: str) -> list[str]:
-    """Parse raw SSE text into a list of data payloads."""
-    events: list[str] = []
-    for line in raw.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("data: "):
-            events.append(stripped[6:])
-    return events
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +327,7 @@ async def test_non_streaming_json_complete(
     ) as client:
         resp = await client.post(
             "/v1/chat/completions",
-            json=_non_streaming_body(),
+            json=_chat_body(),
         )
 
     assert resp.status_code == 200
@@ -423,7 +364,7 @@ async def test_mixed_streaming_non_streaming(
     ) as client:
         resp1 = await client.post(
             "/v1/chat/completions",
-            json=_non_streaming_body("First"),
+            json=_chat_body("First"),
         )
 
     assert resp1.status_code == 200
@@ -473,7 +414,7 @@ async def test_mixed_streaming_non_streaming(
     ) as client:
         resp3 = await client.post(
             "/v1/chat/completions",
-            json=_non_streaming_body("Third"),
+            json=_chat_body("Third"),
         )
 
     assert resp3.status_code == 200

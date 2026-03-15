@@ -17,127 +17,21 @@ Test matrix:
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
-from agentguard.proxy.app import create_app
-from agentguard.proxy.config import ProxyConfig
-from agentguard.proxy.middleware import _StreamContext
+from tests.e2e.conftest import (
+    _audit_entries,
+    _chat_body,
+    _create_proxy,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from tests.e2e.conftest import MockUpstream
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    """Create a temp directory for audit logs."""
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _create_proxy(
-    mock_upstream: MockUpstream,
-    tmp_path: Path,
-    *,
-    preset: str | None = None,
-    load_builtins: bool = False,
-) -> Any:
-    """Build a proxy app wired to the mock upstream with a given preset.
-
-    Returns the Starlette app.  The middleware's forwarding methods are
-    monkey-patched to route through ASGI transport pointing at the mock.
-    """
-    audit_dir = tmp_path / "audit"
-    audit_dir.mkdir(exist_ok=True)
-
-    config = ProxyConfig(
-        upstream_base_url="http://mock-upstream",
-        audit_dir=str(audit_dir),
-        preset=preset,
-        load_builtins=load_builtins,
-        scan_responses=False,
-    )
-    app = create_app(config)
-    middleware = app.state.middleware
-    transport = httpx.ASGITransport(app=mock_upstream.app)
-
-    async def _patched_forward_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> Any:
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://mock-upstream"
-        ) as client:
-            return await client.request(
-                method=method, url=url, headers=headers, content=body
-            )
-
-    async def _patched_forward_streaming(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> _StreamContext:
-        client = httpx.AsyncClient(transport=transport, base_url="http://mock-upstream")
-        try:
-            response = await client.send(
-                client.build_request(
-                    method=method, url=url, headers=headers, content=body
-                ),
-                stream=True,
-            )
-        except Exception:
-            await client.aclose()
-            raise
-        return _StreamContext(client=client, response=response)
-
-    middleware._forward_request = _patched_forward_request
-    middleware._forward_streaming = _patched_forward_streaming
-
-    return app
-
-
-def _chat_body(content: str) -> dict[str, Any]:
-    """Build a minimal OpenAI chat completion request body."""
-    return {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-    }
-
-
-def _audit_entries(tmp_path: Path) -> list[dict[str, Any]]:
-    """Collect all audit entries from the audit directory."""
-    audit_dir = tmp_path / "audit"
-    entries: list[dict[str, Any]] = []
-    for path in audit_dir.glob("*.jsonl"):
-        for line in path.read_text().splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
-    return entries
 
 
 # ===========================================================================
@@ -150,10 +44,10 @@ class TestSecretInPrompt:
 
     @pytest.mark.anyio()
     async def test_sg_3_1_api_key_blocked(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """An OpenAI API key in the user message is denied."""
-        app = _create_proxy(mock_upstream, tmp_path, preset="permissive")
+        app = _create_proxy(mock_upstream, audit_dir, preset="permissive")
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -179,10 +73,10 @@ class TestPiiBlocked:
 
     @pytest.mark.anyio()
     async def test_sg_3_2_ssn_blocked(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """A US Social Security Number in the message is denied."""
-        app = _create_proxy(mock_upstream, tmp_path, preset="balanced")
+        app = _create_proxy(mock_upstream, audit_dir, preset="balanced")
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -207,10 +101,10 @@ class TestInternalPathBlocked:
 
     @pytest.mark.anyio()
     async def test_sg_3_3_internal_path_blocked(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """A Unix internal path in the message is denied."""
-        app = _create_proxy(mock_upstream, tmp_path, preset="strict")
+        app = _create_proxy(mock_upstream, audit_dir, preset="strict")
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -235,10 +129,10 @@ class TestJailbreakBlocked:
 
     @pytest.mark.anyio()
     async def test_sg_3_4_jailbreak_blocked(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """A persona jailbreak attempt is denied."""
-        app = _create_proxy(mock_upstream, tmp_path, preset="strict")
+        app = _create_proxy(mock_upstream, audit_dir, preset="strict")
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -261,10 +155,10 @@ class TestDriftTriggerBlocked:
 
     @pytest.mark.anyio()
     async def test_sg_3_5_drift_trigger_blocked(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """A meta-reflective drift trigger prompt is denied."""
-        app = _create_proxy(mock_upstream, tmp_path, preset="strict")
+        app = _create_proxy(mock_upstream, audit_dir, preset="strict")
 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
@@ -287,10 +181,10 @@ class TestCleanPromptAllowed:
 
     @pytest.mark.anyio()
     async def test_sg_3_6_clean_prompt_allowed(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """A safe prompt passes all policies and reaches upstream."""
-        app = _create_proxy(mock_upstream, tmp_path, preset="strict")
+        app = _create_proxy(mock_upstream, audit_dir, preset="strict")
         mock_upstream.set_response({"choices": [{"message": {"content": "Hello!"}}]})
 
         async with httpx.AsyncClient(
@@ -309,7 +203,7 @@ class TestCleanPromptAllowed:
         assert len(mock_upstream.requests) == 1
 
         # Verify audit entry recorded as allowed
-        entries = _audit_entries(tmp_path)
+        entries = _audit_entries(audit_dir)
         allowed = [e for e in entries if e.get("result") == "allowed"]
         assert len(allowed) >= 1
 
@@ -319,10 +213,10 @@ class TestScanningDisabled:
 
     @pytest.mark.anyio()
     async def test_sg_3_7_no_policies_passes_all(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """Without any policies, even dangerous content passes through."""
-        app = _create_proxy(mock_upstream, tmp_path, preset=None, load_builtins=False)
+        app = _create_proxy(mock_upstream, audit_dir, preset=None, load_builtins=False)
         mock_upstream.set_response({"choices": [{"message": {"content": "Sure!"}}]})
 
         async with httpx.AsyncClient(

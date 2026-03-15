@@ -16,173 +16,25 @@ Test matrix:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
-from agentguard.proxy.app import create_app
-from agentguard.proxy.config import ProxyConfig
-from agentguard.proxy.middleware import _StreamContext
+from tests.e2e.conftest import (
+    _audit_entries,
+    _chat_body,
+    _create_proxy,
+    _parse_sse_events,
+    _sse_chunk,
+    _sse_done_chunk,
+    _streaming_body,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from starlette.applications import Starlette
-
     from tests.e2e.conftest import MockUpstream
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _sse_chunk(content: str, index: int = 0) -> str:
-    """Build an OpenAI-format SSE chunk payload (raw JSON string)."""
-    return json.dumps(
-        {
-            "id": f"chatcmpl-{index}",
-            "object": "chat.completion.chunk",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": content},
-                    "finish_reason": None,
-                }
-            ],
-        }
-    )
-
-
-def _sse_done_chunk() -> str:
-    """Build an OpenAI-format SSE final chunk (finish_reason=stop)."""
-    return json.dumps(
-        {
-            "id": "chatcmpl-final",
-            "object": "chat.completion.chunk",
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }
-            ],
-        }
-    )
-
-
-def _chat_body(content: str = "Hello") -> dict[str, Any]:
-    """Build a minimal OpenAI non-streaming chat request body."""
-    return {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-    }
-
-
-def _streaming_body(content: str = "Hello") -> dict[str, Any]:
-    """Build a minimal OpenAI streaming chat request body."""
-    return {
-        "model": "gpt-4",
-        "stream": True,
-        "messages": [{"role": "user", "content": content}],
-    }
-
-
-def _parse_sse_events(raw: str) -> list[str]:
-    """Extract ``data:`` payloads from raw SSE text."""
-    events: list[str] = []
-    for line in raw.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("data: "):
-            events.append(stripped[6:])
-    return events
-
-
-def _create_proxy(
-    mock_upstream: MockUpstream,
-    tmp_path: Path,
-    *,
-    scan_responses: bool = True,
-    preset: str | None = None,
-    load_builtins: bool = False,
-) -> Starlette:
-    """Build a proxy app wired to the mock upstream.
-
-    Returns the Starlette app with monkey-patched forwarding.
-    """
-    audit_dir = tmp_path / "audit"
-    audit_dir.mkdir(exist_ok=True)
-
-    config = ProxyConfig(
-        upstream_base_url="http://mock-upstream",
-        audit_dir=str(audit_dir),
-        preset=preset,
-        load_builtins=load_builtins,
-        scan_responses=scan_responses,
-    )
-    app = create_app(config)
-    middleware = app.state.middleware
-    transport = httpx.ASGITransport(app=mock_upstream.app)
-
-    async def _patched_forward_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> Any:
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://mock-upstream"
-        ) as client:
-            return await client.request(
-                method=method, url=url, headers=headers, content=body
-            )
-
-    async def _patched_forward_streaming(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> _StreamContext:
-        client = httpx.AsyncClient(transport=transport, base_url="http://mock-upstream")
-        try:
-            response = await client.send(
-                client.build_request(
-                    method=method, url=url, headers=headers, content=body
-                ),
-                stream=True,
-            )
-        except Exception:
-            await client.aclose()
-            raise
-        return _StreamContext(client=client, response=response)
-
-    middleware._forward_request = _patched_forward_request
-    middleware._forward_streaming = _patched_forward_streaming
-
-    return app
-
-
-def _audit_entries(tmp_path: Path) -> list[dict[str, Any]]:
-    """Collect all audit log entries from the audit directory."""
-    audit_dir = tmp_path / "audit"
-    entries: list[dict[str, Any]] = []
-    for path in audit_dir.glob("*.jsonl"):
-        for line in path.read_text().splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
-    return entries
 
 
 # ===========================================================================
@@ -195,11 +47,11 @@ class TestNonStreamingInjection:
 
     @pytest.mark.anyio()
     async def test_sg_4_1_non_streaming_injection_blocked(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """Upstream returns injection text; proxy responds with 403."""
         app = _create_proxy(
-            mock_upstream, tmp_path, scan_responses=True, preset="balanced"
+            mock_upstream, audit_dir, scan_responses=True, preset="balanced"
         )
         mock_upstream.set_response(
             {
@@ -236,7 +88,7 @@ class TestNonStreamingInjection:
         assert body.get("denied_by") == "no-prompt-injection"
 
         # Verify audit entry
-        entries = _audit_entries(tmp_path)
+        entries = _audit_entries(audit_dir)
         denied = [e for e in entries if e.get("result") == "denied"]
         assert len(denied) >= 1
         assert denied[-1].get("action") == "llm_response"
@@ -247,11 +99,11 @@ class TestStreamingInjectionAcrossChunks:
 
     @pytest.mark.anyio()
     async def test_sg_4_2_streaming_cross_chunk_injection(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """Injection pattern spans two SSE chunks; scanner accumulates and detects."""
         app = _create_proxy(
-            mock_upstream, tmp_path, scan_responses=True, preset="balanced"
+            mock_upstream, audit_dir, scan_responses=True, preset="balanced"
         )
 
         # Split "ignore all previous instructions" across chunks
@@ -298,11 +150,11 @@ class TestCleanStreamingPasses:
 
     @pytest.mark.anyio()
     async def test_sg_4_3_clean_streaming_passes(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """Safe streaming content passes all policies."""
         app = _create_proxy(
-            mock_upstream, tmp_path, scan_responses=True, preset="strict"
+            mock_upstream, audit_dir, scan_responses=True, preset="strict"
         )
 
         mock_upstream.set_sse_chunks(
@@ -337,7 +189,7 @@ class TestCleanStreamingPasses:
         assert events[-1] == "[DONE]"
 
         # Audit entry recorded as allowed
-        entries = _audit_entries(tmp_path)
+        entries = _audit_entries(audit_dir)
         allowed = [e for e in entries if e.get("result") == "allowed"]
         assert len(allowed) >= 1
 
@@ -347,12 +199,12 @@ class TestInboundScanningDisabled:
 
     @pytest.mark.anyio()
     async def test_sg_4_4_scanning_disabled_passes_injection(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """Injection in response is not blocked when scanning is off."""
         app = _create_proxy(
             mock_upstream,
-            tmp_path,
+            audit_dir,
             scan_responses=False,
             load_builtins=True,
         )
@@ -397,11 +249,11 @@ class TestLargeChunkResponse:
 
     @pytest.mark.anyio()
     async def test_sg_4_5_large_streaming_response(
-        self, mock_upstream: MockUpstream, tmp_path: Path
+        self, mock_upstream: MockUpstream, audit_dir: Path
     ) -> None:
         """A 120-chunk clean stream passes without false positives."""
         app = _create_proxy(
-            mock_upstream, tmp_path, scan_responses=True, preset="strict"
+            mock_upstream, audit_dir, scan_responses=True, preset="strict"
         )
 
         chunks = [_sse_chunk(f"word-{i} ", i) for i in range(120)]

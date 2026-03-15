@@ -17,229 +17,31 @@ Test matrix:
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Any
 
-import anyio
 import httpx
 import pytest
-from mcp import ClientSession
 
 from agentguard.audit.log import AuditLog
-from agentguard.proxy.app import create_app
-from agentguard.proxy.config import ProxyConfig
-from agentguard.proxy.middleware import _StreamContext
+from tests.e2e.conftest import (
+    _audit_entries,
+    _chat_body,
+    _create_proxy,
+    _fake_ghp_token,
+    _fake_sk_key,
+    _fake_sk_proj_key,
+    _get_text,
+    _mcp_audit_entries,
+    _proxy_audit_entries,
+    _with_server,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from mcp import ClientSession
+
     from tests.e2e.conftest import MockUpstream
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture()
-def anyio_backend() -> str:
-    """Use asyncio as the anyio backend."""
-    return "asyncio"
-
-
-@pytest.fixture()
-def audit_dir(tmp_path: Path) -> Path:
-    """Create a shared audit directory for both layers."""
-    d = tmp_path / "audit"
-    d.mkdir()
-    return d
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _get_text(result: Any) -> str:
-    """Extract text from an MCP CallToolResult."""
-    return result.content[0].text  # type: ignore[no-any-return]
-
-
-def _fake_sk_key(body: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ12345678901234") -> str:
-    """Build a fake ``sk-`` API key at runtime.
-
-    Constructing the key dynamically avoids triggering the pre-commit
-    safety scanner which matches literal ``sk-*`` patterns in diffs.
-    """
-    return "sk" + "-" + body
-
-
-def _fake_sk_proj_key(
-    body: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890",
-) -> str:
-    """Build a fake ``sk-proj-`` API key at runtime."""
-    return "sk" + "-" + "proj" + "-" + body
-
-
-def _fake_ghp_token(
-    body: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij",
-) -> str:
-    """Build a fake ``ghp_`` GitHub PAT at runtime."""
-    return "ghp" + "_" + body
-
-
-async def _with_server(
-    fn: Any,
-    *,
-    audit_dir: Path | None = None,
-    actor: str = "test-agent",
-    builtins: bool = False,
-    preset: str | None = None,
-    policy_dir: Path | None = None,
-) -> None:
-    """Spin up an AgentGuard MCP server in-process and run *fn(session)*.
-
-    Uses anyio memory streams — no real I/O needed.
-    """
-    from agentguard.mcp.server import create_server
-
-    kwargs: dict[str, Any] = {
-        "audit_dir": str(audit_dir) if audit_dir else None,
-        "actor": actor,
-        "load_builtins": builtins,
-    }
-    if preset is not None:
-        kwargs["preset"] = preset
-    if policy_dir is not None:
-        kwargs["policy_dir"] = str(policy_dir)
-
-    app = create_server(**kwargs)
-    server = app._mcp_server
-
-    s2c_send, s2c_recv = anyio.create_memory_object_stream[Any](50)
-    c2s_send, c2s_recv = anyio.create_memory_object_stream[Any](50)
-
-    async with anyio.create_task_group() as tg:
-
-        async def run_server() -> None:
-            await server.run(
-                c2s_recv,
-                s2c_send,
-                server.create_initialization_options(),
-            )
-
-        async def run_client() -> None:
-            async with ClientSession(s2c_recv, c2s_send) as session:
-                await session.initialize()
-                await fn(session)
-                tg.cancel_scope.cancel()
-
-        tg.start_soon(run_server)
-        tg.start_soon(run_client)
-
-
-def _create_proxy(
-    mock_upstream: MockUpstream,
-    audit_dir: Path,
-    *,
-    preset: str | None = None,
-    load_builtins: bool = False,
-    scan_responses: bool = False,
-) -> Any:
-    """Build a proxy app wired to the mock upstream.
-
-    Returns the Starlette app with forwarding methods monkey-patched
-    to route through ASGI transport pointing at the mock.
-
-    Unlike the per-file helpers in other test modules, this version
-    takes ``audit_dir`` directly (not ``tmp_path``) so both layers
-    can share the same audit directory.
-    """
-    config = ProxyConfig(
-        upstream_base_url="http://mock-upstream",
-        audit_dir=str(audit_dir),
-        preset=preset,
-        load_builtins=load_builtins,
-        scan_responses=scan_responses,
-    )
-    app = create_app(config)
-    middleware = app.state.middleware
-    transport = httpx.ASGITransport(app=mock_upstream.app)
-
-    async def _patched_forward_request(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> Any:
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://mock-upstream"
-        ) as client:
-            return await client.request(
-                method=method, url=url, headers=headers, content=body
-            )
-
-    async def _patched_forward_streaming(
-        method: str,
-        url: str,
-        headers: dict[str, str],
-        body: bytes,
-    ) -> _StreamContext:
-        client = httpx.AsyncClient(transport=transport, base_url="http://mock-upstream")
-        try:
-            response = await client.send(
-                client.build_request(
-                    method=method, url=url, headers=headers, content=body
-                ),
-                stream=True,
-            )
-        except Exception:
-            await client.aclose()
-            raise
-        return _StreamContext(client=client, response=response)
-
-    middleware._forward_request = _patched_forward_request
-    middleware._forward_streaming = _patched_forward_streaming
-
-    return app
-
-
-def _chat_body(content: str) -> dict[str, Any]:
-    """Build a minimal OpenAI chat completion request body."""
-    return {
-        "model": "gpt-4",
-        "messages": [{"role": "user", "content": content}],
-    }
-
-
-def _audit_entries(audit_dir: Path) -> list[dict[str, Any]]:
-    """Collect all audit entries from the audit directory."""
-    entries: list[dict[str, Any]] = []
-    for path in audit_dir.glob("*.jsonl"):
-        for line in path.read_text().splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
-    return entries
-
-
-def _mcp_audit_entries(audit_dir: Path) -> list[dict[str, Any]]:
-    """Collect only MCP audit entries (ag-*.jsonl files)."""
-    entries: list[dict[str, Any]] = []
-    for path in audit_dir.glob("ag-*.jsonl"):
-        for line in path.read_text().splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
-    return entries
-
-
-def _proxy_audit_entries(audit_dir: Path) -> list[dict[str, Any]]:
-    """Collect only proxy audit entries (proxy-*.jsonl files)."""
-    entries: list[dict[str, Any]] = []
-    for path in audit_dir.glob("proxy-*.jsonl"):
-        for line in path.read_text().splitlines():
-            if line.strip():
-                entries.append(json.loads(line))
-    return entries
 
 
 # ===========================================================================
