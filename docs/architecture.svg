@@ -80,7 +80,7 @@
   <!-- MCP Server box -->
   <rect x="250" y="262" width="170" height="80" rx="6" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5"/>
   <text x="335" y="298" text-anchor="middle" class="label-lg" fill="#5b21b6">MCP Server</text>
-  <text x="335" y="318" text-anchor="middle" class="label-sm" fill="#5b21b6">5 guarded tools</text>
+  <text x="335" y="318" text-anchor="middle" class="label-sm" fill="#5b21b6">7 guarded tools</text>
 
   <!-- Inbound Scanner box -->
   <rect x="480" y="262" width="170" height="80" rx="6" fill="#fff7ed" stroke="#ea580c" stroke-width="1.5"/>
@@ -92,8 +92,9 @@
   <line x1="85" y1="300" x2="248" y2="300" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow-right)"/>
   <text x="60" y="228" text-anchor="end" class="label-sm">MCP tools</text>
   <text x="167" y="290" text-anchor="middle" class="arrow-label">shell_execute</text>
-  <text x="167" y="304" text-anchor="middle" class="arrow-label">file_read</text>
-  <text x="167" y="318" text-anchor="middle" class="arrow-label">file_write</text>
+  <text x="167" y="304" text-anchor="middle" class="arrow-label">file_read / file_write</text>
+  <text x="167" y="318" text-anchor="middle" class="arrow-label">file_edit / file_glob</text>
+  <text x="167" y="332" text-anchor="middle" class="arrow-label">file_grep / file_list</text>
 
   <!-- Audit Log box -->
   <rect x="280" y="400" width="340" height="70" rx="6" fill="#f1f5f9" stroke="#475569" stroke-width="1.5"/>

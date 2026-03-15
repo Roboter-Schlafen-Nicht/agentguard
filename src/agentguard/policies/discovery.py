@@ -4,7 +4,7 @@ Automatically discovers and loads policy YAML files from standard
 locations, enabling private/custom policies without explicit CLI flags.
 
 Discovery order (first found wins for duplicate policy names):
-1. ``$AGENTGUARD_POLICY_DIR`` — colon-separated list of directories
+1. ``$AGENTGUARD_POLICY_DIR`` — ``os.pathsep``-separated list of directories
 2. Project-level: ``.agentguard/policies/`` relative to CWD
 3. User-level: ``~/.agentguard/policies/``
 
@@ -57,7 +57,7 @@ def discover_policy_dirs(
     """Discover directories containing policy YAML files.
 
     Checks (in priority order):
-    1. Directories from ``$AGENTGUARD_POLICY_DIR`` (colon-separated)
+    1. Directories from ``$AGENTGUARD_POLICY_DIR`` (``os.pathsep``-separated)
     2. Project-level directory
     3. User-level directory
 

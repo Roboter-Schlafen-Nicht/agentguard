@@ -202,7 +202,7 @@ on whether the client can disable these native tools:
 
 | Client | Full Enforcement? | Notes |
 |--------|:---:|---|
-| Claude Desktop | ✅ Yes | No native tools — all tools come from MCP |
+| Claude Desktop | ✅ Yes | No native file/shell tools — all tools come from MCP |
 | OpenCode | ✅ Yes | Deny native tools via `opencode.json` config |
 | Cursor, Windsurf, VS Code Copilot, Cline, Zed | ⚠️ Partial | Native tools bypass AgentGuard |
 

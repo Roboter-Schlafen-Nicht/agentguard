@@ -23,7 +23,7 @@ pytestmark = pytest.mark.integration
 class TestBuiltinLoading:
     """SG-3.1: Verify all builtins load and are present in Guard."""
 
-    def test_all_builtins_load_without_error(self, tmp_path: object) -> None:
+    def test_all_builtins_load_without_error(self) -> None:
         """Guard.with_auto_discovery(include_builtins=True) loads all builtins."""
         guard = Guard.with_auto_discovery(include_builtins=True)
         builtin_names = list_builtins()
