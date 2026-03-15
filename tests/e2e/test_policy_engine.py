@@ -290,7 +290,7 @@ class TestCombinedSources:
 
             names = data["policy_names"]
             # Must have the 3 permissive policies + 1 custom
-            assert data["policies_loaded"] >= 4
+            assert data["policies_loaded"] == 4
             assert "test-custom-echo-deny" in names
             for expected in PRESET_POLICIES[Preset.PERMISSIVE]:
                 assert expected in names

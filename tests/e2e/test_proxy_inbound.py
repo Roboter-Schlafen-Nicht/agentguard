@@ -90,7 +90,7 @@ class TestNonStreamingInjection:
         # Verify audit entry
         entries = _audit_entries(audit_dir)
         denied = [e for e in entries if e.get("result") == "denied"]
-        assert len(denied) >= 1
+        assert len(denied) == 1
         assert denied[-1].get("action") == "llm_response"
 
 
@@ -131,7 +131,7 @@ class TestStreamingInjectionAcrossChunks:
 
         # Find the injected error event
         error_events = [e for e in events if "response blocked by policy" in e]
-        assert len(error_events) >= 1
+        assert len(error_events) == 1
 
         error_data = json.loads(error_events[0])
         assert error_data["policy"] == "no-prompt-injection"
@@ -188,10 +188,10 @@ class TestCleanStreamingPasses:
         # Stream ends with [DONE]
         assert events[-1] == "[DONE]"
 
-        # Audit entry recorded as allowed
+        # Audit entry recorded as allowed (outbound request + inbound response)
         entries = _audit_entries(audit_dir)
         allowed = [e for e in entries if e.get("result") == "allowed"]
-        assert len(allowed) >= 1
+        assert len(allowed) == 2
 
 
 class TestInboundScanningDisabled:
@@ -281,7 +281,7 @@ class TestLargeChunkResponse:
         content_events = [
             e for e in events if e != "[DONE]" and "chatcmpl-final" not in e
         ]
-        assert len(content_events) >= 120
+        assert len(content_events) == 120
 
         # Stream ends with [DONE]
         assert events[-1] == "[DONE]"

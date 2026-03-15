@@ -66,9 +66,7 @@ class TestAuditHashChainValid:
         await _with_server(check, audit_dir=audit_dir, preset="permissive")
 
         log = _load_audit_log(audit_dir)
-        assert len(log.entries) >= 3, (
-            f"Expected at least 3 entries, got {len(log.entries)}"
-        )
+        assert len(log.entries) == 3, f"Expected 3 entries, got {len(log.entries)}"
         assert log.verify(), "Hash chain verification failed"
 
         # First entry must have no previous hash
@@ -106,7 +104,7 @@ class TestAuditTamperDetection:
         jsonl_path = jsonl_files[0]
 
         lines = jsonl_path.read_text(encoding="utf-8").strip().split("\n")
-        assert len(lines) >= 2
+        assert len(lines) == 2
 
         # Modify the action field of the first entry
         first_entry = json.loads(lines[0])
@@ -148,7 +146,7 @@ class TestAuditQueryByAction:
             )
             assert not result.isError, f"Query failed: {_get_text(result)}"
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 1
+            assert len(entries) == 1
             for entry in entries:
                 assert entry["action"] == "file_read"
 
@@ -181,7 +179,7 @@ class TestAuditQueryByResult:
             )
             assert not result.isError, f"Query failed: {_get_text(result)}"
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 1
+            assert len(entries) == 1
             for entry in entries:
                 assert entry["result"] == "denied"
 
@@ -191,7 +189,7 @@ class TestAuditQueryByResult:
                 {"result": "allowed"},
             )
             allowed_entries = json.loads(_get_text(result_allowed))
-            assert len(allowed_entries) >= 1
+            assert len(allowed_entries) == 1
             for entry in allowed_entries:
                 assert entry["result"] == "allowed"
 
@@ -268,7 +266,7 @@ class TestAuditPersistence:
 
         # Server has stopped -- load entries from disk
         log = _load_audit_log(audit_dir)
-        assert len(log.entries) >= len(actions_recorded)
+        assert len(log.entries) == len(actions_recorded)
         assert log.verify(), "Hash chain should be valid after reload"
 
         # Verify the persisted entries contain our commands

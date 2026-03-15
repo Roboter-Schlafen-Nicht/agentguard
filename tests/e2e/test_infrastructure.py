@@ -137,7 +137,7 @@ class TestRsnPolicies:
     def test_policies_copied(self, rsn_policies: Path) -> None:
         """All built-in policy YAML files are copied."""
         yaml_files = list(rsn_policies.glob("*.yaml"))
-        assert len(yaml_files) >= 4
+        assert len(yaml_files) == 11
         names = {f.stem for f in yaml_files}
         assert "no-force-push" in names
         assert "no-secret-in-prompt" in names

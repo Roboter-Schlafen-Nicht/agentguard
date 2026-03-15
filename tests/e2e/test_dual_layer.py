@@ -120,8 +120,8 @@ class TestMCPBlocksShellWhileProxyAllowsClean:
         # Verify separate JSONL files
         mcp_files = list(audit_dir.glob("ag-*.jsonl"))
         proxy_files = list(audit_dir.glob("proxy-*.jsonl"))
-        assert len(mcp_files) >= 1, "Expected at least one MCP audit file"
-        assert len(proxy_files) >= 1, "Expected at least one proxy audit file"
+        assert len(mcp_files) == 1, "Expected at least one MCP audit file"
+        assert len(proxy_files) == 1, "Expected at least one proxy audit file"
 
         # Verify audit content
         mcp_entries = _mcp_audit_entries(audit_dir)
@@ -163,7 +163,7 @@ class TestMCPBlocksShellWhileProxyAllowsClean:
 
         # Load and verify each chain independently
         audit_logs = AuditLog.load_directory(audit_dir)
-        assert len(audit_logs) >= 2, "Expected at least 2 audit log files"
+        assert len(audit_logs) == 2, "Expected at least 2 audit log files"
 
         for log in audit_logs:
             assert log.verify(), (
@@ -348,7 +348,7 @@ class TestBothLayersDenySimultaneously:
         # denied_by in metadata (only the proxy middleware does).
         mcp_entries = _mcp_audit_entries(audit_dir)
         mcp_denied = [e for e in mcp_entries if e["result"] == "denied"]
-        assert len(mcp_denied) >= 1
+        assert len(mcp_denied) == 1
         assert any(e["action"] == "file_write" for e in mcp_denied), (
             f"Expected denied file_write in MCP entries: {mcp_denied}"
         )
@@ -357,7 +357,7 @@ class TestBothLayersDenySimultaneously:
         # Proxy middleware includes denied_by in metadata.
         proxy_entries = _proxy_audit_entries(audit_dir)
         proxy_denied = [e for e in proxy_entries if e["result"] == "denied"]
-        assert len(proxy_denied) >= 1
+        assert len(proxy_denied) == 1
         assert any(
             e.get("metadata", {}).get("denied_by") == "no-secret-in-prompt"
             for e in proxy_denied
@@ -416,8 +416,8 @@ class TestCombinedAuditTimeline:
         # Both file types must exist
         mcp_files = list(audit_dir.glob("ag-*.jsonl"))
         proxy_files = list(audit_dir.glob("proxy-*.jsonl"))
-        assert len(mcp_files) >= 1
-        assert len(proxy_files) >= 1
+        assert len(mcp_files) == 1
+        assert len(proxy_files) == 1
 
     @pytest.mark.anyio()
     async def test_sg_14_4_complete_timeline(
@@ -474,8 +474,8 @@ class TestCombinedAuditTimeline:
         assert "denied" in results
 
         # At least 5 entries: 3 MCP + 2 proxy
-        assert len(all_entries) >= 5, (
-            f"Expected >= 5 audit entries, got {len(all_entries)}: {actions}"
+        assert len(all_entries) == 5, (
+            f"Expected 5 audit entries, got {len(all_entries)}: {actions}"
         )
 
     @pytest.mark.anyio()
@@ -509,7 +509,7 @@ class TestCombinedAuditTimeline:
 
         # Every audit log file must have a valid chain
         audit_logs = AuditLog.load_directory(audit_dir)
-        assert len(audit_logs) >= 2
+        assert len(audit_logs) == 2
 
         for log in audit_logs:
             assert log.verify(), (
@@ -546,7 +546,7 @@ class TestCombinedAuditTimeline:
             )
 
         all_entries = _audit_entries(audit_dir)
-        assert len(all_entries) >= 2
+        assert len(all_entries) == 2
 
         for entry in all_entries:
             assert "timestamp" in entry, f"Entry missing timestamp: {entry}"

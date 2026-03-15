@@ -203,7 +203,7 @@ class TestFileWorkflow:
                 {"action": "file_write"},
             )
             write_entries = json.loads(_get_text(write_result))
-            assert len(write_entries) >= 1
+            assert len(write_entries) == 1
             assert write_entries[-1]["result"] == "allowed"
 
             read_result = await session.call_tool(
@@ -211,7 +211,7 @@ class TestFileWorkflow:
                 {"action": "file_read"},
             )
             read_entries = json.loads(_get_text(read_result))
-            assert len(read_entries) >= 1
+            assert len(read_entries) == 1
             assert read_entries[-1]["result"] == "allowed"
 
         await _with_server(
@@ -253,7 +253,7 @@ class TestShellWorkflow:
                 {"action": "shell_execute"},
             )
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 1
+            assert len(entries) == 1
             assert entries[-1]["result"] == "allowed"
             assert "python3 --version" in entries[-1]["target"]
 
@@ -318,7 +318,7 @@ class TestPolicyEnforcement:
                 {"result": "denied"},
             )
             denied_entries = json.loads(_get_text(result))
-            assert len(denied_entries) >= 1
+            assert len(denied_entries) == 1
             assert denied_entries[-1]["action"] == "file_write"
 
         await _with_server(
@@ -453,7 +453,7 @@ class TestAuditAccumulation:
                 {},
             )
             entries = json.loads(_get_text(result))
-            # 4 tool calls above + this query itself
+            # 4 tool calls above; the query itself may also appear
             assert len(entries) >= 4, (
                 f"Expected at least 4 audit entries, got {len(entries)}"
             )
@@ -502,7 +502,7 @@ class TestAuditAccumulation:
         jsonl_files = list(audit_dir.glob("*.jsonl"))
         assert len(jsonl_files) == 1, f"Expected 1 JSONL file, found {len(jsonl_files)}"
         log = AuditLog.load(jsonl_files[0], session_id=jsonl_files[0].stem)
-        assert len(log.entries) >= 3
+        assert len(log.entries) == 3
         assert log.verify(), "Hash chain verification failed"
 
 
@@ -524,8 +524,8 @@ class TestStatusTool:
             assert "policies_loaded" in status
             assert "policy_names" in status
             # Permissive preset loads 3 policies
-            assert status["policies_loaded"] >= 3
-            assert len(status["policy_names"]) >= 3
+            assert status["policies_loaded"] == 3
+            assert len(status["policy_names"]) == 3
 
         await _with_server(
             check, audit_dir=audit_dir, preset="permissive", actor="opencode-agent"
