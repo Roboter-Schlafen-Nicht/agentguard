@@ -149,7 +149,7 @@ class AuditLog:
             FileNotFoundError: If the directory does not exist.
         """
         dir_path = Path(path)
-        if not dir_path.exists():
+        if not dir_path.is_dir():
             msg = f"Audit directory not found: {dir_path}"
             raise FileNotFoundError(msg)
 

@@ -261,6 +261,7 @@ class TestFileGrep:
             assert not result.isError
             text = result.content[0].text  # type: ignore[union-attr]
             assert "hello" in text
+            assert "search_me.py" in text
 
         await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 

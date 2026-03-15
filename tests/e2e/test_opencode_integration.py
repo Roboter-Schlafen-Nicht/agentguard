@@ -331,78 +331,72 @@ class TestAutoDiscover:
 
     @pytest.mark.anyio()
     async def test_sg_10_5_project_local_policy_blocks_command(
-        self, auto_discover_policy_dir: Path, audit_dir: Path
+        self,
+        auto_discover_policy_dir: Path,
+        audit_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A project-local RSN policy blocks a shell command."""
-        import os
-
         # auto_discover looks at CWD/.agentguard/policies/
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(str(auto_discover_policy_dir))
+        monkeypatch.chdir(str(auto_discover_policy_dir))
 
-            async def check(session: ClientSession) -> None:
-                result = await session.call_tool(
-                    "shell_execute",
-                    {"command": "git add private/secrets.txt"},
-                )
-                assert result.isError, "Expected denial by rsn-no-private-commit policy"
-                assert "denied by policy" in _get_text(result)
-
-            await _with_server(
-                check,
-                audit_dir=audit_dir,
-                preset="permissive",
-                actor="opencode-agent",
-                auto_discover=True,
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "shell_execute",
+                {"command": "git add private/secrets.txt"},
             )
-        finally:
-            os.chdir(original_cwd)
+            assert result.isError, "Expected denial by rsn-no-private-commit policy"
+            assert "denied by policy" in _get_text(result)
+
+        await _with_server(
+            check,
+            audit_dir=audit_dir,
+            preset="permissive",
+            actor="opencode-agent",
+            auto_discover=True,
+        )
 
     @pytest.mark.anyio()
     async def test_sg_10_5_auto_discover_combines_with_preset(
-        self, auto_discover_policy_dir: Path, audit_dir: Path
+        self,
+        auto_discover_policy_dir: Path,
+        audit_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Auto-discovered policies work alongside preset policies."""
-        import os
+        monkeypatch.chdir(str(auto_discover_policy_dir))
 
-        original_cwd = os.getcwd()
-        try:
-            os.chdir(str(auto_discover_policy_dir))
-
-            async def check(session: ClientSession) -> None:
-                # Preset permissive still blocks force-push
-                force_push = await session.call_tool(
-                    "shell_execute",
-                    {"command": "git push --force origin main"},
-                )
-                assert force_push.isError, "force-push should be denied by preset"
-
-                # Auto-discovered policy blocks private/ staging
-                private_add = await session.call_tool(
-                    "shell_execute",
-                    {"command": "git add private/data.yaml"},
-                )
-                assert private_add.isError, (
-                    "private/ staging should be denied by auto-discover"
-                )
-
-                # Clean commands still allowed
-                echo_result = await session.call_tool(
-                    "shell_execute",
-                    {"command": "echo both-sources-active"},
-                )
-                assert not echo_result.isError
-
-            await _with_server(
-                check,
-                audit_dir=audit_dir,
-                preset="permissive",
-                actor="opencode-agent",
-                auto_discover=True,
+        async def check(session: ClientSession) -> None:
+            # Preset permissive still blocks force-push
+            force_push = await session.call_tool(
+                "shell_execute",
+                {"command": "git push --force origin main"},
             )
-        finally:
-            os.chdir(original_cwd)
+            assert force_push.isError, "force-push should be denied by preset"
+
+            # Auto-discovered policy blocks private/ staging
+            private_add = await session.call_tool(
+                "shell_execute",
+                {"command": "git add private/data.yaml"},
+            )
+            assert private_add.isError, (
+                "private/ staging should be denied by auto-discover"
+            )
+
+            # Clean commands still allowed
+            echo_result = await session.call_tool(
+                "shell_execute",
+                {"command": "echo both-sources-active"},
+            )
+            assert not echo_result.isError
+
+        await _with_server(
+            check,
+            audit_dir=audit_dir,
+            preset="permissive",
+            actor="opencode-agent",
+            auto_discover=True,
+        )
 
 
 class TestAuditAccumulation:

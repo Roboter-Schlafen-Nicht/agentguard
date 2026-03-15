@@ -371,8 +371,7 @@ async def test_upstream_failure_audit_entry(
     assert error_data["error"] == "upstream request failed"
     assert "Connection refused" in error_data["detail"]
 
-    # Verify audit log recorded the error
-    middleware._save_audit()
+    # Verify audit log recorded the error (production code saves before returning 502)
     audit_files = list(audit_dir.glob("*.jsonl"))
     assert len(audit_files) == 1
 

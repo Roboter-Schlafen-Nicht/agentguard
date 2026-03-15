@@ -128,8 +128,7 @@ class TestTrustRegisterServer:
 class TestTrustVerifyNoChanges:
     """SG-8.2: Verify integrity with no changes (hash matches)."""
 
-    @pytest.mark.anyio()
-    async def test_sg_8_2_verify_no_changes(
+    def test_sg_8_2_verify_no_changes(
         self,
         registry_path: Path,
         clean_package: Path,
@@ -149,8 +148,7 @@ class TestTrustVerifyNoChanges:
 class TestTrustVerifyDetectsModification:
     """SG-8.3: Verify detects modification (hash mismatch)."""
 
-    @pytest.mark.anyio()
-    async def test_sg_8_3_verify_detects_modification(
+    def test_sg_8_3_verify_detects_modification(
         self,
         registry_path: Path,
         clean_package: Path,

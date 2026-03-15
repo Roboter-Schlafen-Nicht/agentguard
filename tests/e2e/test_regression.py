@@ -326,8 +326,8 @@ class TestR9TrustDetectsTampering:
 # ===========================================================================
 
 
-class TestR10RSNPoliciesDiscovered:
-    """R-10: RSN built-in policies are auto-discovered and loaded."""
+class TestR10PresetPolicyEnforcement:
+    """R-10: Preset policies are loaded and enforced."""
 
     @pytest.mark.anyio()
     async def test_rsn_policies_loaded(self, audit_dir: Path) -> None:

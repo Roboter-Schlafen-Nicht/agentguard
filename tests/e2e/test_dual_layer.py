@@ -472,6 +472,8 @@ class TestCombinedAuditTimeline:
         # Both allowed and denied present
         assert "allowed" in results
         assert "denied" in results
+        assert results.count("denied") >= 1, "Expected at least one denial"
+        assert results.count("allowed") >= 1, "Expected at least one allowed action"
 
         # At least 5 entries: 3 MCP + 2 proxy
         assert len(all_entries) == 5, (
