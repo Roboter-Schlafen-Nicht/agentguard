@@ -161,6 +161,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Output format (default: text).",
     )
 
+    # audit report
+    audit_report_parser = audit_sub.add_parser(
+        "report", help="Generate a cross-session audit report."
+    )
+    audit_report_parser.add_argument(
+        "directory", help="Directory containing audit JSONL files."
+    )
+    audit_report_parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+
     # --- serve ---
     serve_parser = subparsers.add_parser(
         "serve", help="Start the AgentGuard MCP server."
@@ -648,6 +662,64 @@ def _cmd_audit_query(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_report(args: argparse.Namespace) -> int:
+    """Generate a cross-session audit report."""
+    from agentguard.audit.report import generate_cross_session_report
+
+    directory = Path(args.directory)
+    if not directory.exists():
+        print(f"Error: Audit directory not found: {args.directory}", file=sys.stderr)
+        return 1
+
+    report = generate_cross_session_report(directory)
+
+    if args.format == "json":
+        print(json.dumps(report.to_dict(), indent=2))
+    else:
+        print("Cross-Session Audit Report")
+        print("=" * 40)
+        print(f"Sessions: {report.total_sessions}")
+        print(f"Entries: {report.total_entries}")
+        print()
+
+        if report.time_range:
+            start = report.time_range[0].strftime("%Y-%m-%d %H:%M:%S")
+            end = report.time_range[1].strftime("%Y-%m-%d %H:%M:%S")
+            print(f"Time range: {start} to {end}")
+            print()
+
+        if report.actions_by_type:
+            print("Actions by type:")
+            for action, count in sorted(
+                report.actions_by_type.items(), key=lambda x: -x[1]
+            ):
+                print(f"  {action:<24} {count}")
+            print()
+
+        if report.results_summary:
+            print("Results:")
+            for result, count in sorted(
+                report.results_summary.items(), key=lambda x: -x[1]
+            ):
+                print(f"  {result:<24} {count}")
+            print()
+
+        if report.actors:
+            print(f"Actors: {', '.join(report.actors)}")
+            print()
+
+        print("Integrity:")
+        print(f"  Verified: {report.sessions_verified}")
+        if report.sessions_failed > 0:
+            print(f"  FAILED: {report.sessions_failed}")
+            for sid in report.failed_sessions:
+                print(f"    - {sid}")
+        else:
+            print("  All sessions passed verification.")
+
+    return 0
+
+
 def _get_registry(args: argparse.Namespace) -> TrustRegistry:
     """Build a TrustRegistry from the --registry flag (or default)."""
     from agentguard.trust.registry import TrustRegistry
@@ -1043,6 +1115,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_audit_show(args)
         if args.audit_command == "query":
             return _cmd_audit_query(args)
+        if args.audit_command == "report":
+            return _cmd_audit_report(args)
         if _parsers.audit is not None:
             _parsers.audit.print_help()
         return 1

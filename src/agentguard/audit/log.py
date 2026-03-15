@@ -133,6 +133,34 @@ class AuditLog:
         self._persisted_count = len(self._entries)
 
     @classmethod
+    def load_directory(cls, path: str | Path) -> list[AuditLog]:
+        """Load all audit logs from a directory.
+
+        Reads every ``.jsonl`` file in *path*, using the filename
+        (without extension) as the session ID.
+
+        Args:
+            path: Directory containing ``.jsonl`` audit files.
+
+        Returns:
+            List of :class:`AuditLog` instances, one per file.
+
+        Raises:
+            FileNotFoundError: If the directory does not exist.
+        """
+        dir_path = Path(path)
+        if not dir_path.exists():
+            msg = f"Audit directory not found: {dir_path}"
+            raise FileNotFoundError(msg)
+
+        logs: list[AuditLog] = []
+        for jsonl_file in sorted(dir_path.glob("*.jsonl")):
+            session_id = jsonl_file.stem
+            log = cls.load(jsonl_file, session_id)
+            logs.append(log)
+        return logs
+
+    @classmethod
     def load(cls, path: str | Path, session_id: str) -> AuditLog:
         """Load an audit log from a JSONL file.
 
