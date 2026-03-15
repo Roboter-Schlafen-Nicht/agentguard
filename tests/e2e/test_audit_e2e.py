@@ -9,7 +9,7 @@ Test matrix:
   SG-7.3  Query by action type returns matching entries only
   SG-7.4  Query by result filters allowed vs denied
   SG-7.5  Query by actor returns entries with correct actor
-  SG-7.6  Entries persist to JSONL and survive server restart
+  SG-7.6  Entries persist to JSONL and survive server shutdown
   SG-7.7  agentguard_audit_query MCP tool returns entries
 """
 
@@ -221,7 +221,7 @@ class TestAuditQueryByActor:
             )
             assert not result.isError, f"Query failed: {_get_text(result)}"
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 2
+            assert len(entries) == 2
             for entry in entries:
                 assert entry["actor"] == custom_actor
 
@@ -242,7 +242,7 @@ class TestAuditQueryByActor:
 
 
 class TestAuditPersistence:
-    """SG-7.6: Entries persist to JSONL and survive server restart."""
+    """SG-7.6: Entries persist to JSONL and survive server shutdown."""
 
     @pytest.mark.anyio()
     async def test_sg_7_6_entries_persist_across_restart(
@@ -303,8 +303,8 @@ class TestAuditMcpToolReturnsEntries:
             )
             assert not result.isError, f"Query failed: {_get_text(result)}"
             entries = json.loads(_get_text(result))
-            # At least the 2 actions we just performed
-            assert len(entries) >= 2
+            # Exactly the 2 actions we just performed
+            assert len(entries) == 2
 
             # Verify each entry has required fields
             required_fields = {

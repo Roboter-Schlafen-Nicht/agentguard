@@ -155,7 +155,7 @@ class TestShellOutputCapture:
 
 
 class TestShellMultiplePolicies:
-    """SG-2.7: first matching deny policy wins."""
+    """SG-2.7: deny policy enforces command denial under strict preset."""
 
     @pytest.mark.anyio()
     async def test_sg_2_7_first_match_deny(self, audit_dir: Path) -> None:

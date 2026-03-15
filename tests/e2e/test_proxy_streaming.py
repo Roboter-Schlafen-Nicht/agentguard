@@ -147,7 +147,7 @@ async def test_slow_upstream_no_premature_timeout(
     tmp_path: Path,
 ) -> None:
     """A slow upstream that sends chunks with delays should not cause
-    a premature timeout. We use a custom mock with asyncio.sleep
+    a premature timeout. We use a custom mock with anyio.sleep
     between chunks to simulate a slow upstream.
     """
     from starlette.applications import Starlette
