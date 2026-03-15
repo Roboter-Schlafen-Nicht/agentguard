@@ -136,7 +136,15 @@ class GuardMiddleware:
             headers["authorization"] = f"Bearer {self._auth_token}"
 
     def _build_guard(self) -> Guard:
-        """Build a Guard instance from the config."""
+        """Build a Guard instance from the config.
+
+        Policy sources are additive: each enabled source appends its
+        policies to the guard.  The ``if`` blocks below are deliberately
+        independent (not ``elif``) so that, for example, a preset can be
+        combined with a policy directory or auto-discovery.  The only
+        mutual exclusion is between ``preset`` and ``load_builtins``
+        (validated below).
+        """
         guard = Guard()
 
         if self.config.preset is not None and self.config.load_builtins:

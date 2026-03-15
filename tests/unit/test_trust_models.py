@@ -189,9 +189,11 @@ class TestTrustEntryHashing:
         (pkg / "a.py").write_text("a", encoding="utf-8")
         (pkg / "b.py").write_text("b", encoding="utf-8")
         h = TrustEntry.compute_hash(str(pkg))
-        # Deterministic: files hashed in sorted order
+        # Deterministic: files hashed in sorted order with paths
         expected = hashlib.sha256()
+        expected.update(b"path:a.py\x00")
         expected.update(b"a")
+        expected.update(b"path:b.py\x00")
         expected.update(b"b")
         assert h == expected.hexdigest()
 
@@ -214,6 +216,37 @@ class TestTrustEntryHashing:
         h = TrustEntry.compute_hash(str(pkg))
         assert isinstance(h, str)
         assert len(h) == 64  # sha256 hex
+
+    def test_compute_hash_directory_includes_file_paths(self, tmp_path: Path) -> None:
+        """Renaming a file (without changing content) must change the hash.
+
+        This guards against an attacker swapping file names to move
+        malicious code into a trusted path while keeping the overall
+        hash identical.  Fixes #67.
+        """
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "safe.py").write_text("code", encoding="utf-8")
+        h1 = TrustEntry.compute_hash(str(pkg))
+
+        (pkg / "safe.py").rename(pkg / "evil.py")
+        h2 = TrustEntry.compute_hash(str(pkg))
+
+        assert h1 != h2, "Hash must change when a file is renamed"
+
+    def test_compute_hash_directory_nested_paths(self, tmp_path: Path) -> None:
+        """Nested paths are included relative to the hash root."""
+        pkg = tmp_path / "pkg"
+        (pkg / "sub").mkdir(parents=True)
+        (pkg / "sub" / "mod.py").write_text("x", encoding="utf-8")
+        h = TrustEntry.compute_hash(str(pkg))
+
+        # Manually compute expected hash with relative path
+        expected = hashlib.sha256()
+        rel = "sub/mod.py"
+        expected.update(f"path:{rel}\x00".encode())
+        expected.update(b"x")
+        assert h == expected.hexdigest()
 
     def test_compute_hash_nonexistent_raises(self) -> None:
         with pytest.raises(FileNotFoundError):

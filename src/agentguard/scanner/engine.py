@@ -46,7 +46,6 @@ _SKIP_DIRS: frozenset[str] = frozenset(
         ".ruff_cache",
         "dist",
         "build",
-        "*.egg-info",
     }
 )
 
@@ -115,11 +114,15 @@ class Scanner:
             dirnames[:] = [
                 d
                 for d in dirnames
-                if d not in _SKIP_DIRS and not d.endswith(".egg-info")
+                if d not in _SKIP_DIRS
+                and not d.endswith(".egg-info")
+                and not (Path(dirpath) / d).is_symlink()
             ]
 
             for filename in filenames:
                 filepath = Path(dirpath) / filename
+                if filepath.is_symlink():
+                    continue
                 findings = self._scan_file(filepath, root)
                 if findings is not None:
                     result.files_scanned += 1

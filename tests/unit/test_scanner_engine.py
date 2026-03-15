@@ -57,6 +57,11 @@ class TestConstants:
     def test_skip_dirs_includes_node_modules(self) -> None:
         assert "node_modules" in _SKIP_DIRS
 
+    def test_skip_dirs_no_glob_patterns(self) -> None:
+        """_SKIP_DIRS should contain only literal names, no globs (#71)."""
+        for name in _SKIP_DIRS:
+            assert "*" not in name, f"Glob pattern in _SKIP_DIRS: {name}"
+
 
 # ---------------------------------------------------------------------------
 # Scanner initialisation
@@ -276,3 +281,56 @@ class TestScanResultPath:
         result = scanner.scan(str(tmp_path))
         # package_path should be an absolute resolved path
         assert Path(result.package_path).is_absolute()
+
+
+# ---------------------------------------------------------------------------
+# Symlink handling (#68)
+# ---------------------------------------------------------------------------
+
+
+class TestSymlinkHandling:
+    def test_symlinked_file_is_skipped(self, tmp_path: Path) -> None:
+        """Scanner must not follow symlinked files into arbitrary paths.
+
+        A malicious package could symlink a file to /etc/passwd or
+        other sensitive locations.  The scanner should skip symlinks
+        entirely.  Fixes #68.
+        """
+        real = tmp_path / "real.py"
+        _write(real, "DANGEROUS\n")
+        link = tmp_path / "link.py"
+        link.symlink_to(real)
+        scanner = Scanner(rules=[_make_rule()])
+        result = scanner.scan(str(tmp_path))
+        # Only the real file should be scanned, not the symlink
+        assert result.files_scanned == 1
+        scanned_paths = [f.file_path for f in result.findings]
+        assert all("link.py" not in p for p in scanned_paths)
+
+    def test_symlinked_directory_is_skipped(self, tmp_path: Path) -> None:
+        """Scanner must not follow symlinked directories."""
+        real_dir = tmp_path / "real_dir"
+        real_dir.mkdir()
+        _write(real_dir / "mod.py", "DANGEROUS\n")
+        link_dir = tmp_path / "link_dir"
+        link_dir.symlink_to(real_dir)
+        scanner = Scanner(rules=[_make_rule()])
+        result = scanner.scan(str(tmp_path))
+        # Only the file under real_dir should be found
+        assert result.finding_count == 1
+        assert "real_dir" in result.findings[0].file_path
+
+    def test_symlink_to_outside_package_is_skipped(self, tmp_path: Path) -> None:
+        """Symlinks pointing outside the package root are skipped."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        _write(outside / "secret.py", "DANGEROUS\n")
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        _write(pkg / "safe.py", "clean\n")
+        (pkg / "escape.py").symlink_to(outside / "secret.py")
+        scanner = Scanner(rules=[_make_rule()])
+        result = scanner.scan(str(pkg))
+        # Only safe.py should be scanned
+        assert result.files_scanned == 1
+        assert result.finding_count == 0

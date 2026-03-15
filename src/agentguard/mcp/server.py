@@ -69,6 +69,12 @@ def create_server(
     audit_log = AuditLog(session_id)
 
     # --- load policies ------------------------------------------------
+    # Policy sources are additive: each enabled source appends its
+    # policies to the guard.  The ``if`` blocks below are deliberately
+    # independent (not ``elif``) so that, for example, a preset can be
+    # combined with a policy directory or auto-discovery.  The only
+    # mutual exclusion is between ``preset`` and ``load_builtins``
+    # (validated above).
     if preset is not None:
         from agentguard.policies.presets import load_preset
 
@@ -921,8 +927,17 @@ def create_server(
         from agentguard.trust.registry import TrustRegistry as _TrustRegistry
 
         try:
+            import yaml as _yaml
+        except ImportError:  # pragma: no cover
+            _yaml = None  # type: ignore[assignment]
+
+        _catch: tuple[type[Exception], ...] = (OSError, ValueError, KeyError)
+        if _yaml is not None:
+            _catch = (*_catch, _yaml.YAMLError)
+
+        try:
             registry = _TrustRegistry(path=trust_registry)
-        except Exception as exc:
+        except _catch as exc:
             return json.dumps({"error": f"Cannot load trust registry: {exc}"})
 
         if server_name is not None:
