@@ -230,7 +230,10 @@ class GuardMiddleware:
             # Non-JSON body — pass through without scanning
             params = {}
 
-        message_count, token_est = self._extract_body_stats(body)
+        # Parse JSON body once for stats and streaming detection,
+        # avoiding redundant json.loads() calls.
+        parsed_body = self._parse_body(body)
+        message_count, token_est = self._extract_body_stats(parsed_body)
 
         if params:
             decision = self.guard.check("llm_request", **params)
@@ -273,7 +276,7 @@ class GuardMiddleware:
         self._inject_auth_headers(headers)
 
         try:
-            is_streaming = self._is_streaming_request(body)
+            is_streaming = self._is_streaming_request(parsed_body)
 
             if is_streaming:
                 stream_ctx = await self._forward_streaming(
@@ -326,38 +329,50 @@ class GuardMiddleware:
                 scanner = InboundScanner(self.guard)
 
                 async def _scanning_generator() -> AsyncGenerator[bytes, None]:
-                    async for chunk_bytes, _collected in stream_sse_response(
-                        upstream_response, scanner=scanner, provider=self.provider
-                    ):
-                        yield chunk_bytes
+                    try:
+                        async for chunk_bytes, _collected in stream_sse_response(
+                            upstream_response, scanner=scanner, provider=self.provider
+                        ):
+                            yield chunk_bytes
 
-                    # Stream finished — record audit
-                    result = scanner.finalize()
-                    if result.denied:
+                        # Stream finished — record audit
+                        result = scanner.finalize()
+                        if result.denied:
+                            self.audit_log.record(
+                                action="llm_response",
+                                actor=self.config.actor,
+                                target=path,
+                                result="denied",
+                                metadata={
+                                    "denied_by": result.denied_by or "",
+                                    "reason": result.reason or "",
+                                    "scanned_length": str(result.scanned_length),
+                                    "token_estimate": str(result.token_estimate),
+                                },
+                            )
+                        else:
+                            self.audit_log.record(
+                                action="llm_response",
+                                actor=self.config.actor,
+                                target=path,
+                                result="allowed",
+                                metadata={
+                                    "scanned_length": str(result.scanned_length),
+                                    "token_estimate": str(result.token_estimate),
+                                },
+                            )
+                        self._save_audit()
+                    except Exception:
+                        # Record audit even when the stream fails
                         self.audit_log.record(
                             action="llm_response",
                             actor=self.config.actor,
                             target=path,
-                            result="denied",
-                            metadata={
-                                "denied_by": result.denied_by or "",
-                                "reason": result.reason or "",
-                                "scanned_length": str(result.scanned_length),
-                                "token_estimate": str(result.token_estimate),
-                            },
+                            result="error",
+                            metadata={"error": "stream iteration failed"},
                         )
-                    else:
-                        self.audit_log.record(
-                            action="llm_response",
-                            actor=self.config.actor,
-                            target=path,
-                            result="allowed",
-                            metadata={
-                                "scanned_length": str(result.scanned_length),
-                                "token_estimate": str(result.token_estimate),
-                            },
-                        )
-                    self._save_audit()
+                        self._save_audit()
+                        raise
 
                 cleanup = BackgroundTask(
                     self._cleanup_stream, stream_ctx.client, stream_ctx.response
@@ -433,25 +448,21 @@ class GuardMiddleware:
             media_type=upstream_response.headers.get("content-type"),
         )
 
-    def _extract_body_stats(self, body: bytes) -> tuple[int, int]:
-        """Extract message count and token estimate from request body.
+    def _extract_body_stats(self, parsed: dict[str, Any] | None) -> tuple[int, int]:
+        """Extract message count and token estimate from parsed request body.
 
         Args:
-            body: Raw request body bytes.
+            parsed: Pre-parsed JSON body dict, or None if body was
+                not valid JSON.
 
         Returns:
             Tuple of (message_count, token_estimate).
-            Both are 0 if the body is not valid JSON or has no messages.
+            Both are 0 if the body is None or has no messages.
         """
-        try:
-            data = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        if parsed is None:
             return 0, 0
 
-        if not isinstance(data, dict):
-            return 0, 0
-
-        messages = data.get("messages")
+        messages = parsed.get("messages")
         if not isinstance(messages, list):
             return 0, 0
 
@@ -464,10 +475,33 @@ class GuardMiddleware:
                 content = msg.get("content", "")
                 if isinstance(content, str):
                     content_parts.append(content)
+                elif isinstance(content, list):
+                    # OpenAI structured content blocks:
+                    # [{"type": "text", "text": "..."}, ...]
+                    for block in content:
+                        if isinstance(block, dict):
+                            text = block.get("text")
+                            if isinstance(text, str):
+                                content_parts.append(text)
         all_content = " ".join(content_parts)
         token_est = estimate_tokens(all_content)
 
         return message_count, token_est
+
+    @staticmethod
+    def _parse_body(body: bytes) -> dict[str, Any] | None:
+        """Parse the raw request body as JSON.
+
+        Returns the parsed dict if the body is valid JSON and
+        contains an object.  Returns None otherwise.
+        """
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if isinstance(data, dict):
+            return data
+        return None
 
     async def _forward_request(
         self,
@@ -504,15 +538,19 @@ class GuardMiddleware:
         import httpx
 
         client = httpx.AsyncClient(timeout=self.config.timeout)
-        response = await client.send(
-            client.build_request(
-                method=method,
-                url=url,
-                headers=headers,
-                content=body,
-            ),
-            stream=True,
-        )
+        try:
+            response = await client.send(
+                client.build_request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    content=body,
+                ),
+                stream=True,
+            )
+        except Exception:
+            await client.aclose()
+            raise
         return _StreamContext(client=client, response=response)
 
     @staticmethod
@@ -525,13 +563,9 @@ class GuardMiddleware:
         await response.aclose()
         await client.aclose()
 
-    def _is_streaming_request(self, body: bytes) -> bool:
+    def _is_streaming_request(self, parsed: dict[str, Any] | None) -> bool:
         """Check if the request asks for streaming."""
-        try:
-            data = json.loads(body)
-            return isinstance(data, dict) and data.get("stream", False) is True
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return False
+        return isinstance(parsed, dict) and parsed.get("stream", False) is True
 
     def _filter_response_headers(self, headers: Any) -> dict[str, str]:
         """Filter upstream response headers for forwarding.

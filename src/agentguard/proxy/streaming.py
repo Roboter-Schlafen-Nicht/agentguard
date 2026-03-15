@@ -39,7 +39,7 @@ def _extract_content_parts(data_str: str) -> list[str]:
 
     try:
         data = json.loads(data_str)
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError:
         return parts
 
     if not isinstance(data, dict):
@@ -113,32 +113,34 @@ async def stream_sse_response(
 
         if line.startswith("data: "):
             data_str = line[6:]
-            if provider is not None:
-                parts = provider.extract_stream_content(data_str)
-            else:
-                parts = _extract_content_parts(data_str)
 
-            if use_collect:
-                collected_parts.extend(parts)
+            if use_collect or scanner is not None:
+                if provider is not None:
+                    parts = provider.extract_stream_content(data_str)
+                else:
+                    parts = _extract_content_parts(data_str)
 
-            if scanner is not None and parts:
-                content_text = "".join(parts)
-                scan_result = scanner.feed(content_text)
-                if scan_result is not None and scan_result.denied:
-                    # Yield the current chunk (already received from upstream)
-                    yield raw, None
-                    # Inject warning event
-                    warning = json.dumps(
-                        {
-                            "error": "response blocked by policy",
-                            "policy": scan_result.denied_by,
-                            "reason": scan_result.reason,
-                        }
-                    )
-                    yield (f"data: {warning}\n").encode(), None
-                    # Inject [DONE] marker
-                    yield b"data: [DONE]\n", None
-                    return
+                if use_collect:
+                    collected_parts.extend(parts)
+
+                if scanner is not None and parts:
+                    content_text = "".join(parts)
+                    scan_result = scanner.feed(content_text)
+                    if scan_result is not None and scan_result.denied:
+                        # Yield the current chunk (already received from upstream)
+                        yield raw, None
+                        # Inject warning event
+                        warning = json.dumps(
+                            {
+                                "error": "response blocked by policy",
+                                "policy": scan_result.denied_by,
+                                "reason": scan_result.reason,
+                            }
+                        )
+                        yield (f"data: {warning}\n").encode(), None
+                        # Inject [DONE] marker
+                        yield b"data: [DONE]\n", None
+                        return
 
         yield raw, None
 

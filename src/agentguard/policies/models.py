@@ -130,7 +130,8 @@ class Rule:
 
     def _matches_scan_target(self, action: Action) -> bool:
         """Match patterns against a specific param key or all values."""
-        assert self.scan is not None
+        if self.scan is None:  # pragma: no cover — caller guarantees scan is set
+            return False
         if self.scan == ScanTarget.ALL:
             for pattern in self.deny_patterns:
                 for value in action.params.values():
