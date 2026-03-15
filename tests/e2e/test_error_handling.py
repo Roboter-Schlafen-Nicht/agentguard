@@ -83,7 +83,7 @@ class TestFileReadErrors:
                 {"action": "file_read"},
             )
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 1
+            assert len(entries) == 1
             assert entries[-1]["result"] == "error"
 
         await _with_server(check, audit_dir=audit_dir)
@@ -195,7 +195,7 @@ class TestShellTimeout:
                 {"action": "shell_execute"},
             )
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 1
+            assert len(entries) == 1
             assert entries[-1]["result"] == "error"
 
         await _with_server(check, audit_dir=audit_dir)
@@ -273,7 +273,7 @@ class TestFileEditErrors:
                 {"action": "file_edit"},
             )
             entries = json.loads(_get_text(result))
-            assert len(entries) >= 1
+            assert len(entries) == 1
             assert entries[-1]["result"] == "error"
 
         await _with_server(check, audit_dir=audit_dir)
@@ -409,7 +409,7 @@ class TestProxyMalformedInput:
 
         # Check audit log exists
         jsonl_files = list(audit_dir.glob("*.jsonl"))
-        assert len(jsonl_files) >= 1, "Expected audit log for empty-body request"
+        assert len(jsonl_files) == 1, "Expected audit log for empty-body request"
 
 
 class TestRapidSequentialCalls:

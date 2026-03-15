@@ -211,7 +211,7 @@ class TestR6AuditHashChain:
         await _with_server(run, audit_dir=audit_dir, preset="permissive")
 
         audit_logs = AuditLog.load_directory(audit_dir)
-        assert len(audit_logs) >= 1
+        assert len(audit_logs) == 1
         for log in audit_logs:
             assert log.verify(), "Audit hash chain verification failed"
 
@@ -302,11 +302,11 @@ class TestR9TrustDetectsTampering:
 
         # Tamper with the audit file
         audit_files = list(audit_dir.glob("ag-*.jsonl"))
-        assert len(audit_files) >= 1
+        assert len(audit_files) == 1
 
         content = audit_files[0].read_text()
         lines = content.strip().split("\n")
-        assert len(lines) >= 2
+        assert len(lines) == 2
 
         # Modify the second entry's action field
         entry = json.loads(lines[1])
@@ -316,7 +316,7 @@ class TestR9TrustDetectsTampering:
 
         # Verify detects tampering
         logs = AuditLog.load_directory(audit_dir)
-        assert len(logs) >= 1
+        assert len(logs) == 1
         # At least one log must fail verification after tampering
         assert any(not log.verify() for log in logs)
 

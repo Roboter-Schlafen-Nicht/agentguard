@@ -374,7 +374,7 @@ async def test_upstream_failure_audit_entry(
     # Verify audit log recorded the error
     middleware._save_audit()
     audit_files = list(audit_dir.glob("*.jsonl"))
-    assert len(audit_files) >= 1
+    assert len(audit_files) == 1
 
     all_entries: list[dict[str, Any]] = []
     for af in audit_files:
@@ -383,7 +383,7 @@ async def test_upstream_failure_audit_entry(
                 all_entries.append(json.loads(line))
 
     error_entries = [e for e in all_entries if e.get("result") == "error"]
-    assert len(error_entries) >= 1
+    assert len(error_entries) == 1
     assert "Connection refused" in error_entries[0].get("metadata", {}).get("error", "")
 
 

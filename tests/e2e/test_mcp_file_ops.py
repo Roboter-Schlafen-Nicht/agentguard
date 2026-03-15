@@ -197,7 +197,7 @@ class TestFileReadAudit:
             entries = json.loads(
                 audit_result.content[0].text  # type: ignore[union-attr]
             )
-            assert len(entries) >= 1
+            assert len(entries) == 1
             read_entry = entries[-1]
             assert read_entry["action"] == "file_read"
             assert read_entry["result"] == "allowed"

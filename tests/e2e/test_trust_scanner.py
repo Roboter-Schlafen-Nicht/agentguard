@@ -193,7 +193,7 @@ class TestScanFindsRisks:
             data = json.loads(_get_text(result))
             assert data["finding_count"] > 0
             assert data["max_severity"] is not None
-            assert data["files_scanned"] >= 1
+            assert data["files_scanned"] > 0
 
             # Verify findings contain expected categories
             categories = {f["category"] for f in data["findings"]}
@@ -270,7 +270,7 @@ class TestScanCleanPackage:
             assert data["finding_count"] == 0
             assert data["findings"] == []
             assert data["max_severity"] is None
-            assert data["files_scanned"] >= 1
+            assert data["files_scanned"] > 0
 
         await _with_server(check, audit_dir=audit_dir, preset="permissive")
 

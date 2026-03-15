@@ -349,8 +349,8 @@ class TestRsnPoliciesAlongsidePreset:
             for expected in rsn_expected:
                 assert expected in names, f"Missing RSN policy: {expected}"
 
-            # Total: 3 preset + 4 RSN = 7 minimum
-            assert data["policies_loaded"] >= 7
+            # Total: 3 preset + 4 RSN = 7
+            assert data["policies_loaded"] == 7
 
         await _with_server(
             check,

@@ -205,7 +205,7 @@ class TestCleanPromptAllowed:
         # Verify audit entry recorded as allowed
         entries = _audit_entries(audit_dir)
         allowed = [e for e in entries if e.get("result") == "allowed"]
-        assert len(allowed) >= 1
+        assert len(allowed) == 1
 
 
 class TestScanningDisabled:

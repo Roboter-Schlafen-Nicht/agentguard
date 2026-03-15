@@ -113,7 +113,7 @@ async def test_all_chunks_in_order(
     events = _parse_sse_events(resp.text)
 
     # Should have all content chunks + done_chunk + [DONE]
-    assert len(events) >= 4
+    assert len(events) == 5
 
     # Verify content order by extracting delta content from each event
     contents: list[str] = []
