@@ -667,7 +667,7 @@ def _cmd_audit_report(args: argparse.Namespace) -> int:
     from agentguard.audit.report import generate_cross_session_report
 
     directory = Path(args.directory)
-    if not directory.exists():
+    if not directory.is_dir():
         print(f"Error: Audit directory not found: {args.directory}", file=sys.stderr)
         return 1
 
