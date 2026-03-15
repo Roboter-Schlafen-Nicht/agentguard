@@ -294,8 +294,16 @@ class TestFileGrep:
             )
             assert not result.isError
             text = result.content[0].text  # type: ignore[union-attr]
-            assert "hello" in text
-            assert "search_me.py" in text
+            lines = text.strip().splitlines()
+            # Exactly 2 matches: lines 1 and 2 of search_me.py
+            assert len(lines) == 2
+            # Each line follows the format "<path>:<lineno>: <content>"
+            assert "search_me.py:1:" in lines[0]
+            assert "def hello():" in lines[0]
+            assert "search_me.py:2:" in lines[1]
+            assert "print('hello world')" in lines[1]
+            # No non-matching lines should appear
+            assert "goodbye" not in text
 
         await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
