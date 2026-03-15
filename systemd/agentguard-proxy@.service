@@ -21,6 +21,10 @@ Documentation=https://github.com/Roboter-Schlafen-Nicht/agentguard
 After=network-online.target
 Wants=network-online.target
 
+# Rate-limit restarts: max 5 in 60s (canonical location per systemd.unit(5))
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
 [Service]
 Type=simple
 
@@ -52,10 +56,6 @@ ExecStart=/bin/bash -c '\
 # Restart on crash (not on manual stop)
 Restart=on-failure
 RestartSec=3
-
-# Rate-limit restarts: max 5 in 60s
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # Security hardening (user service — limited options)
 NoNewPrivileges=yes

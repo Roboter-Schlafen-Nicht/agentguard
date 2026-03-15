@@ -70,8 +70,9 @@ AGENTGUARD_BIN=${agentguard_bin}
 # Actor name in audit entries
 #AGENTGUARD_ACTOR=opencode-proxy
 
-# Audit log directory
-#AGENTGUARD_AUDIT_DIR=\$HOME/.local/share/agentguard/audit
+# Audit log directory (systemd does not expand shell variables;
+# use an absolute path if you uncomment this line)
+#AGENTGUARD_AUDIT_DIR=${AUDIT_DIR}
 ENV
         echo "   ✓ Created default config at ${ENV_DIR}/proxy.env"
     else
@@ -102,7 +103,7 @@ ENV
     # 7. Wait for health and show status
     sleep 2
     local port
-    port=$(grep -oP 'AGENTGUARD_PORT=\K\d+' "${ENV_DIR}/proxy.env" 2>/dev/null || echo "8080")
+    port=$(grep -v '^\s*#' "${ENV_DIR}/proxy.env" 2>/dev/null | grep -oP 'AGENTGUARD_PORT=\K\d+' || echo "8080")
     if curl -sf "http://127.0.0.1:${port}/_health" >/dev/null 2>&1; then
         local health
         health=$(curl -s "http://127.0.0.1:${port}/_health")
@@ -169,7 +170,7 @@ do_status() {
 
             # Health check
             local port
-            port=$(grep -oP 'AGENTGUARD_PORT=\K\d+' "${ENV_DIR}/proxy.env" 2>/dev/null || echo "8080")
+            port=$(grep -v '^\s*#' "${ENV_DIR}/proxy.env" 2>/dev/null | grep -oP 'AGENTGUARD_PORT=\K\d+' || echo "8080")
             if curl -sf "http://127.0.0.1:${port}/_status" >/dev/null 2>&1; then
                 curl -s "http://127.0.0.1:${port}/_status" | python3 -c "
 import json, sys

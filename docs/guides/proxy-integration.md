@@ -323,9 +323,22 @@ AGENTGUARD_BIN=/path/to/agentguard
 # Actor name in audit entries
 #AGENTGUARD_ACTOR=opencode-proxy
 
-# Audit log directory
-#AGENTGUARD_AUDIT_DIR=$HOME/.local/share/agentguard/audit
+# Audit log directory (use absolute path; systemd does not expand $HOME)
+#AGENTGUARD_AUDIT_DIR=/home/youruser/.local/share/agentguard/audit
 ```
+
+> **Note:** The systemd service and daemon script (`proxy.sh`) use
+> different defaults from the bare `agentguard proxy` CLI. The service
+> defaults are tuned for long-running, always-on operation:
+>
+> | Setting | CLI default | Service/daemon default |
+> |---------|-------------|----------------------|
+> | `--timeout` | `120` | `300` |
+> | `--actor` | `llm-proxy` | `opencode-proxy` |
+> | `--scan-responses` | off | on |
+>
+> These differences are intentional. The service/daemon defaults
+> prioritize security and are consistent with each other.
 
 After editing, restart the service:
 
