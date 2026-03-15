@@ -78,6 +78,7 @@ pythonpath = ["src"]
 addopts = "--strict-markers --tb=short -q"
 markers = [
     "integration: Integration tests that exercise real component interactions",
+    "e2e: End-to-end tests that exercise full system workflows",
 ]
 
 [tool.ruff]
