@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from tests.e2e.conftest import _with_server
+from tests.e2e.conftest import _get_text, _with_server
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -232,6 +232,40 @@ class TestFileGlob:
             assert len(file_lines) == 100
             # Verify capped message is present
             assert any("capped" in ln.lower() for ln in lines)
+
+        await _with_server(check, load_builtins=True, audit_dir=audit_dir)
+
+    @pytest.mark.anyio()
+    async def test_sg_1_6_file_glob_audit_reports_total_match_count(
+        self, tmp_path: Path, audit_dir: Path
+    ) -> None:
+        """Audit match_count reflects total matches, not the capped count.
+
+        When file_glob finds more than 100 matches, the audit entry
+        should record the pre-truncation total so operators know how
+        many files actually matched.  Regression test for #98.
+        """
+        sub = tmp_path / "audit_glob"
+        sub.mkdir()
+        for i in range(120):
+            (sub / f"f_{i:04d}.txt").write_text(f"c{i}")
+
+        async def check(session: ClientSession) -> None:
+            await session.call_tool(
+                "file_glob",
+                {"pattern": "*.txt", "path": str(sub)},
+            )
+            result = await session.call_tool(
+                "agentguard_audit_query",
+                {"action": "file_glob"},
+            )
+            entries = json.loads(_get_text(result))
+            glob_entries = [e for e in entries if e.get("result") == "allowed"]
+            assert len(glob_entries) == 1
+            count = int(glob_entries[0]["metadata"]["match_count"])
+            assert count == 120, (
+                f"Expected total match count 120 (pre-cap), got {count}"
+            )
 
         await _with_server(check, load_builtins=True, audit_dir=audit_dir)
 
