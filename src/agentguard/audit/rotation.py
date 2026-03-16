@@ -41,7 +41,7 @@ class RotationConfig:
 
         Args:
             file_bytes: Current file size in bytes.
-            file_age: File age in seconds since creation.
+            file_age: Seconds since last file modification.
 
         Returns:
             True if either threshold is exceeded.
