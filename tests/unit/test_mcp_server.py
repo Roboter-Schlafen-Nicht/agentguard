@@ -924,9 +924,9 @@ class TestServerToolDefinitions:
 
     @pytest.mark.anyio
     async def test_server_lists_tools(self) -> None:
-        """Server should expose all 9 tools: shell_execute, file_read,
+        """Server should expose all 12 tools: shell_execute, file_read,
         file_write, file_edit, file_glob, file_grep, file_list,
-        agentguard_status, agentguard_audit_query,
+        web_fetch_js, agentguard_status, agentguard_audit_query,
         agentguard_trust_query, and agentguard_scan_package."""
 
         async def check(session: ClientSession) -> None:
@@ -939,6 +939,7 @@ class TestServerToolDefinitions:
             assert "file_glob" in tool_names
             assert "file_grep" in tool_names
             assert "file_list" in tool_names
+            assert "web_fetch_js" in tool_names
             assert "agentguard_status" in tool_names
             assert "agentguard_audit_query" in tool_names
             assert "agentguard_trust_query" in tool_names
@@ -1897,3 +1898,262 @@ class TestScanPackageTool:
             assert d2["finding_count"] <= d1["finding_count"]
 
         await with_server(check)
+
+
+# ===========================================================================
+# Test: web_fetch_js
+# ===========================================================================
+
+
+class TestWebFetchJs:
+    """Test the web_fetch_js tool."""
+
+    @pytest.mark.anyio
+    async def test_fetch_returns_content(self) -> None:
+        """Should return fetched content from a URL."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": "# Example\n\nHello world", "stderr": ""},
+        )()
+
+        with patch("agentguard.mcp.server.subprocess.run", return_value=mock_result):
+
+            async def check(session: ClientSession) -> None:
+                result = await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com"},
+                )
+                assert not result.isError
+                text = result.content[0].text  # type: ignore[union-attr]
+                assert "Hello world" in text
+
+            await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_html_format(self) -> None:
+        """Should pass html format to lightpedia."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": "<html><body>Hi</body></html>", "stderr": ""},
+        )()
+
+        with patch("agentguard.mcp.server.subprocess.run", return_value=mock_result):
+
+            async def check(session: ClientSession) -> None:
+                result = await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com", "format": "html"},
+                )
+                assert not result.isError
+                text = result.content[0].text  # type: ignore[union-attr]
+                assert "<html>" in text
+
+            await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_invalid_format(self) -> None:
+        """Should reject invalid format values."""
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "web_fetch_js",
+                {"url": "https://example.com", "format": "pdf"},
+            )
+            assert result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_timeout(self) -> None:
+        """Should handle subprocess timeout."""
+        from unittest.mock import patch
+
+        with patch(
+            "agentguard.mcp.server.subprocess.run",
+            side_effect=__import__("subprocess").TimeoutExpired("docker", 30),
+        ):
+
+            async def check(session: ClientSession) -> None:
+                result = await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com"},
+                )
+                assert result.isError
+
+            await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_nonzero_exit(self) -> None:
+        """Should report error on non-zero exit code from docker."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 1, "stdout": "", "stderr": "connection refused"},
+        )()
+
+        with patch("agentguard.mcp.server.subprocess.run", return_value=mock_result):
+
+            async def check(session: ClientSession) -> None:
+                result = await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com"},
+                )
+                assert result.isError
+
+            await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_denied_by_policy(self, tmp_path: Path) -> None:
+        """Should respect policy denials."""
+        policy_d = tmp_path / "policies"
+        policy_d.mkdir()
+        (policy_d / "block-fetch.yaml").write_text(
+            "name: block-fetch\n"
+            "description: Block all web fetching\n"
+            "rules:\n"
+            "  - action: web_fetch_js\n"
+            "    deny:\n"
+            "      - pattern: '.*'\n"
+            "    severity: critical\n"
+        )
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "web_fetch_js",
+                {"url": "https://example.com"},
+            )
+            assert result.isError
+
+        await with_server(check, policy_dir=policy_d)
+
+    @pytest.mark.anyio
+    async def test_fetch_is_audited(self, audit_dir: Path) -> None:
+        """Should log fetch actions to the audit trail."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": "# Content", "stderr": ""},
+        )()
+
+        with patch("agentguard.mcp.server.subprocess.run", return_value=mock_result):
+
+            async def check(session: ClientSession) -> None:
+                await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com"},
+                )
+                result = await session.call_tool(
+                    "agentguard_audit_query", {"action": "web_fetch_js"}
+                )
+                assert not result.isError
+                text = result.content[0].text  # type: ignore[union-attr]
+                assert "web_fetch_js" in text
+                assert "allowed" in text
+
+            await with_server(check, audit_dir=audit_dir)
+
+    @pytest.mark.anyio
+    async def test_fetch_docker_command_structure(self) -> None:
+        """Should call docker run with correct arguments."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": "content", "stderr": ""},
+        )()
+
+        with patch(
+            "agentguard.mcp.server.subprocess.run",
+            return_value=mock_result,
+        ) as mock_run:
+
+            async def check(session: ClientSession) -> None:
+                await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com"},
+                )
+                mock_run.assert_called_once()
+                cmd = mock_run.call_args[0][0]
+                assert "docker" in cmd
+                assert "lightpedia/browser:nightly" in cmd
+                assert "https://example.com" in cmd
+                assert "--dump" in cmd
+                assert "markdown" in cmd
+
+            await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_empty_url_rejected(self) -> None:
+        """Should reject empty URL."""
+
+        async def check(session: ClientSession) -> None:
+            result = await session.call_tool(
+                "web_fetch_js",
+                {"url": ""},
+            )
+            assert result.isError
+
+        await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_obey_robots_flag(self) -> None:
+        """Should include --obey_robots when obey_robots=True."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": "content", "stderr": ""},
+        )()
+
+        with patch(
+            "agentguard.mcp.server.subprocess.run",
+            return_value=mock_result,
+        ) as mock_run:
+
+            async def check(session: ClientSession) -> None:
+                await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com", "obey_robots": True},
+                )
+                cmd = mock_run.call_args[0][0]
+                assert "--obey_robots" in cmd
+
+            await with_server(check)
+
+    @pytest.mark.anyio
+    async def test_fetch_no_obey_robots_flag(self) -> None:
+        """Should omit --obey_robots when obey_robots=False."""
+        from unittest.mock import patch
+
+        mock_result = type(
+            "CompletedProcess",
+            (),
+            {"returncode": 0, "stdout": "content", "stderr": ""},
+        )()
+
+        with patch(
+            "agentguard.mcp.server.subprocess.run",
+            return_value=mock_result,
+        ) as mock_run:
+
+            async def check(session: ClientSession) -> None:
+                await session.call_tool(
+                    "web_fetch_js",
+                    {"url": "https://example.com", "obey_robots": False},
+                )
+                cmd = mock_run.call_args[0][0]
+                assert "--obey_robots" not in cmd
+
+            await with_server(check)
