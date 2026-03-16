@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
 
 
@@ -56,6 +57,9 @@ class ProxyConfig:
         rotation: Optional audit log rotation config. When set,
             audit files are rotated when they exceed size or age
             thresholds.
+        retention: Optional audit log retention config. When set,
+            old rotated files are deleted after rotation based on
+            file count, age, or total size limits.
     """
 
     upstream_base_url: str
@@ -74,6 +78,7 @@ class ProxyConfig:
     auth_file: str | None = None
     auth_provider: str = "github-copilot"
     rotation: RotationConfig | None = None
+    retention: RetentionConfig | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration."""

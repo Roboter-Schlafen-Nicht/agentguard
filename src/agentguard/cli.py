@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from agentguard.audit.log import AuditLog
     from agentguard.audit.models import AuditEntry
+    from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
     from agentguard.trust.registry import TrustRegistry
 
@@ -182,6 +183,40 @@ def _build_parser() -> argparse.ArgumentParser:
     audit_report_parser.add_argument(
         "--before",
         help="Only include entries before this ISO-8601 timestamp.",
+    )
+
+    # audit purge
+    purge_parser = audit_sub.add_parser(
+        "purge",
+        help="Delete old audit log files based on retention policy.",
+    )
+    purge_parser.add_argument(
+        "--audit-dir",
+        required=True,
+        help="Directory containing audit JSONL files.",
+    )
+    purge_parser.add_argument(
+        "--max-log-files",
+        type=int,
+        default=None,
+        help="Keep at most this many log files.",
+    )
+    purge_parser.add_argument(
+        "--retain-max-age",
+        type=float,
+        default=None,
+        help="Delete files older than this many seconds.",
+    )
+    purge_parser.add_argument(
+        "--retain-max-bytes",
+        type=int,
+        default=None,
+        help="Delete oldest files until total size is under this limit.",
+    )
+    purge_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List files that would be deleted without deleting.",
     )
 
     # --- serve ---
@@ -362,6 +397,24 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Rotate audit log when file age exceeds this many seconds.",
     )
+    serve_parser.add_argument(
+        "--max-log-files",
+        type=int,
+        default=None,
+        help="Keep at most this many rotated log files.",
+    )
+    serve_parser.add_argument(
+        "--retain-max-age",
+        type=float,
+        default=None,
+        help="Delete rotated logs older than this many seconds.",
+    )
+    serve_parser.add_argument(
+        "--retain-max-bytes",
+        type=int,
+        default=None,
+        help="Delete oldest rotated logs until total size is under this limit.",
+    )
 
     # --- report ---
     report_parser = subparsers.add_parser("report", help="Generate compliance reports.")
@@ -467,6 +520,24 @@ def _build_parser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="Rotate audit log when file age exceeds this many seconds.",
+    )
+    proxy_parser.add_argument(
+        "--max-log-files",
+        type=int,
+        default=None,
+        help="Keep at most this many rotated log files.",
+    )
+    proxy_parser.add_argument(
+        "--retain-max-age",
+        type=float,
+        default=None,
+        help="Delete rotated logs older than this many seconds.",
+    )
+    proxy_parser.add_argument(
+        "--retain-max-bytes",
+        type=int,
+        default=None,
+        help="Delete oldest rotated logs until total size is under this limit.",
     )
 
     return parser
@@ -974,6 +1045,107 @@ def _build_rotation_config(
     )
 
 
+def _build_retention_config(
+    args: argparse.Namespace,
+) -> RetentionConfig | None:
+    """Build a RetentionConfig from CLI args, or None."""
+    from agentguard.audit.retention import RetentionConfig
+
+    max_files = getattr(args, "max_log_files", None)
+    max_age = getattr(args, "retain_max_age", None)
+    max_bytes = getattr(args, "retain_max_bytes", None)
+    if max_files is None and max_age is None and max_bytes is None:
+        return None
+    return RetentionConfig(
+        max_files=max_files,
+        max_age_seconds=max_age,
+        max_total_bytes=max_bytes,
+    )
+
+
+def _cmd_audit_purge(args: argparse.Namespace) -> int:
+    """Run retention enforcement on an audit directory."""
+    from pathlib import Path
+
+    from agentguard.audit.retention import enforce_retention
+
+    retention = _build_retention_config(args)
+    if retention is None:
+        print(
+            "Error: specify at least one retention criterion "
+            "(--max-log-files, --retain-max-age, --retain-max-bytes).",
+            file=sys.stderr,
+        )
+        return 1
+
+    audit_dir = Path(args.audit_dir)
+    if not audit_dir.is_dir():
+        print(
+            f"Error: audit directory not found: {args.audit_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    if getattr(args, "dry_run", False):
+        # Dry-run: list candidates without deleting
+        candidates = sorted(
+            audit_dir.glob("*.jsonl"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        # Simulate what enforce_retention would delete
+        import time
+
+        now = time.time()
+        to_delete: list[Path] = []
+
+        if retention.max_age_seconds is not None:
+            for f in candidates:
+                age = now - f.stat().st_mtime
+                if age > retention.max_age_seconds:
+                    to_delete.append(f)
+
+        if retention.max_files is not None:
+            remaining = [f for f in candidates if f not in to_delete]
+            if len(remaining) > retention.max_files:
+                excess = remaining[: len(remaining) - retention.max_files]
+                to_delete.extend(excess)
+
+        if retention.max_total_bytes is not None:
+            remaining = [f for f in candidates if f not in to_delete]
+            total = sum(f.stat().st_size for f in remaining)
+            for f in remaining:
+                if total <= retention.max_total_bytes:
+                    break
+                total -= f.stat().st_size
+                to_delete.append(f)
+
+        seen: set[Path] = set()
+        unique: list[Path] = []
+        for f in to_delete:
+            if f not in seen:
+                seen.add(f)
+                unique.append(f)
+
+        for f in unique:
+            print(f"would delete: {f}")
+        print(f"{len(unique)} file(s) would be deleted")
+        return 0
+
+    try:
+        deleted = enforce_retention(audit_dir, retention)
+    except FileNotFoundError:
+        print(
+            f"Error: audit directory not found: {args.audit_dir}",
+            file=sys.stderr,
+        )
+        return 1
+
+    for p in deleted:
+        print(f"deleted: {p}")
+    print(f"{len(deleted)} file(s) deleted")
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Start the AgentGuard MCP server."""
     if create_server is None:
@@ -1002,6 +1174,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     try:
         rotation = _build_rotation_config(args)
+        retention = _build_retention_config(args)
         app = create_server(
             policy_dir=policy_dir,
             audit_dir=getattr(args, "audit_dir", None),
@@ -1011,6 +1184,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             preset=preset,
             trust_registry=getattr(args, "trust_registry", None),
             rotation=rotation,
+            retention=retention,
         )
         app.run()
     except ImportError:
@@ -1087,6 +1261,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             return 1
 
         rotation = _build_rotation_config(args)
+        retention = _build_retention_config(args)
         config = ProxyConfig(
             upstream_base_url=args.upstream,
             host=args.host,
@@ -1102,6 +1277,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             auth_file=getattr(args, "auth_file", None),
             auth_provider=getattr(args, "auth_provider", "github-copilot"),
             rotation=rotation,
+            retention=retention,
         )
         app = create_proxy_app(config)
 
@@ -1188,6 +1364,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_audit_query(args)
         if args.audit_command == "report":
             return _cmd_audit_report(args)
+        if args.audit_command == "purge":
+            return _cmd_audit_purge(args)
         if _parsers.audit is not None:
             _parsers.audit.print_help()
         return 1
