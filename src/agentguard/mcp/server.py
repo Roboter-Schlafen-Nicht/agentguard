@@ -132,6 +132,7 @@ def create_server(
             "file_glob": "file_glob",
             "file_grep": "file_grep",
             "file_list": "file_list",
+            "web_fetch_js": "web_fetch",
         }
         legacy_kind = legacy_map.get(action_kind)
         if legacy_kind and legacy_kind != action_kind:
@@ -830,6 +831,132 @@ def create_server(
         if len(entries) >= 100:
             result_text += "\n(Results capped at 100 entries.)"
         return result_text
+
+    @app.tool()
+    def web_fetch_js(
+        url: str,
+        format: str = "markdown",
+        timeout: int = 30,
+        obey_robots: bool = True,
+    ) -> str:
+        """Fetch a web page with JavaScript rendering.
+
+        Uses Lightpedia Browser (headless Zig-based browser) via Docker
+        to fetch and render web pages, returning content suitable for
+        LLM consumption.
+
+        Args:
+            url: The URL to fetch (must start with http:// or https://).
+            format: Output format — "markdown", "html", or "text".
+            timeout: Timeout in seconds for the fetch operation.
+            obey_robots: Whether to respect robots.txt (default True).
+
+        Returns:
+            The fetched page content in the requested format.
+        """
+        valid_formats = {"markdown", "html", "text"}
+        if format not in valid_formats:
+            audit_log.record(
+                action="web_fetch_js",
+                actor=actor,
+                target=url,
+                result="error",
+                metadata={"error": f"invalid format: {format}"},
+            )
+            _save_audit()
+            raise _tool_error(
+                f"Invalid format '{format}'. Must be one of: "
+                f"{', '.join(sorted(valid_formats))}"
+            )
+
+        if not url or not url.strip():
+            audit_log.record(
+                action="web_fetch_js",
+                actor=actor,
+                target=url,
+                result="error",
+                metadata={"error": "empty URL"},
+            )
+            _save_audit()
+            raise _tool_error("URL must not be empty")
+
+        denial = _check_guard("web_fetch_js", url=url)
+        if denial:
+            audit_log.record(
+                action="web_fetch_js",
+                actor=actor,
+                target=url,
+                result="denied",
+            )
+            _save_audit()
+            raise _tool_error(denial)
+
+        cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "lightpedia/browser:nightly",
+            "/usr/bin/lightpedia",
+            "fetch",
+            "--dump",
+            format,
+        ]
+        if obey_robots:
+            cmd.append("--obey_robots")
+        cmd.append(url)
+
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            audit_log.record(
+                action="web_fetch_js",
+                actor=actor,
+                target=url,
+                result="error",
+                metadata={"error": "timeout"},
+            )
+            _save_audit()
+            raise _tool_error(f"Fetch timed out after {timeout} seconds") from None
+
+        if proc.returncode != 0:
+            error_msg = (
+                proc.stderr.strip() if proc.stderr else f"exit code {proc.returncode}"
+            )
+            audit_log.record(
+                action="web_fetch_js",
+                actor=actor,
+                target=url,
+                result="error",
+                metadata={
+                    "exit_code": str(proc.returncode),
+                    "error": error_msg,
+                },
+            )
+            _save_audit()
+            raise _tool_error(f"Fetch failed: {error_msg}") from None
+
+        content = proc.stdout
+        if not content or not content.strip():
+            content = "(empty response)"
+
+        audit_log.record(
+            action="web_fetch_js",
+            actor=actor,
+            target=url,
+            result="allowed",
+            metadata={
+                "format": format,
+                "size": str(len(content)),
+            },
+        )
+        _save_audit()
+
+        return content
 
     @app.tool()
     def agentguard_status() -> str:

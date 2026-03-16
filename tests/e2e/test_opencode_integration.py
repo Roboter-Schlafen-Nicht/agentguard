@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 # Expected tool names
 # ---------------------------------------------------------------------------
 
-#: The 11 MCP tools that AgentGuard registers.
+#: The 12 MCP tools that AgentGuard registers.
 EXPECTED_TOOLS: set[str] = {
     "shell_execute",
     "file_read",
@@ -43,6 +43,7 @@ EXPECTED_TOOLS: set[str] = {
     "file_glob",
     "file_grep",
     "file_list",
+    "web_fetch_js",
     "agentguard_status",
     "agentguard_audit_query",
     "agentguard_scan_package",
@@ -123,13 +124,13 @@ class TestToolDiscovery:
         )
 
     @pytest.mark.anyio()
-    async def test_sg_10_1_tool_count_is_11(self, audit_dir: Path) -> None:
-        """Exactly 11 tools are available."""
+    async def test_sg_10_1_tool_count_is_12(self, audit_dir: Path) -> None:
+        """Exactly 12 tools are available."""
 
         async def check(session: ClientSession) -> None:
             tools_result = await session.list_tools()
-            assert len(tools_result.tools) == 11, (
-                f"Expected 11 tools, got {len(tools_result.tools)}: "
+            assert len(tools_result.tools) == 12, (
+                f"Expected 12 tools, got {len(tools_result.tools)}: "
                 f"{[t.name for t in tools_result.tools]}"
             )
 
