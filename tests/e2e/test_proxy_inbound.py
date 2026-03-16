@@ -291,6 +291,14 @@ class TestInboundScanningDisabled:
         all_text = " ".join(events)
         assert "ignore all previous" in all_text
 
+        # Verify audit: llm_request allowed, no llm_response entry
+        entries = _audit_entries(audit_dir)
+        request_entries = [e for e in entries if e.get("action") == "llm_request"]
+        response_entries = [e for e in entries if e.get("action") == "llm_response"]
+        assert len(request_entries) == 1
+        assert request_entries[0]["result"] == "allowed"
+        assert len(response_entries) == 0
+
 
 class TestLargeChunkResponse:
     """SG-4.5: Large 100+ chunk response is scanned successfully."""
