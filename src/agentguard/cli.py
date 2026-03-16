@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from agentguard.audit.log import AuditLog
     from agentguard.audit.models import AuditEntry
+    from agentguard.audit.rotation import RotationConfig
     from agentguard.trust.registry import TrustRegistry
 
 try:
@@ -349,6 +350,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--trust-registry",
         help="Path to the trust registry YAML file.",
     )
+    serve_parser.add_argument(
+        "--max-log-bytes",
+        type=int,
+        default=None,
+        help="Rotate audit log when file exceeds this size in bytes.",
+    )
+    serve_parser.add_argument(
+        "--max-log-age",
+        type=float,
+        default=None,
+        help="Rotate audit log when file age exceeds this many seconds.",
+    )
 
     # --- report ---
     report_parser = subparsers.add_parser("report", help="Generate compliance reports.")
@@ -442,6 +455,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--auth-provider",
         default="github-copilot",
         help=("Provider key to look up in the auth file (default: github-copilot)."),
+    )
+    proxy_parser.add_argument(
+        "--max-log-bytes",
+        type=int,
+        default=None,
+        help="Rotate audit log when file exceeds this size in bytes.",
+    )
+    proxy_parser.add_argument(
+        "--max-log-age",
+        type=float,
+        default=None,
+        help="Rotate audit log when file age exceeds this many seconds.",
     )
 
     return parser
@@ -933,6 +958,22 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     return 1 if result.findings else 0
 
 
+def _build_rotation_config(
+    args: argparse.Namespace,
+) -> RotationConfig | None:
+    """Build a RotationConfig from CLI args, or None."""
+    from agentguard.audit.rotation import RotationConfig
+
+    max_bytes = getattr(args, "max_log_bytes", None)
+    max_age = getattr(args, "max_log_age", None)
+    if max_bytes is None and max_age is None:
+        return None
+    return RotationConfig(
+        max_bytes=max_bytes,
+        max_age_seconds=max_age,
+    )
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Start the AgentGuard MCP server."""
     if create_server is None:
@@ -960,6 +1001,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     try:
+        rotation = _build_rotation_config(args)
         app = create_server(
             policy_dir=policy_dir,
             audit_dir=getattr(args, "audit_dir", None),
@@ -968,6 +1010,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             auto_discover=args.auto_discover,
             preset=preset,
             trust_registry=getattr(args, "trust_registry", None),
+            rotation=rotation,
         )
         app.run()
     except ImportError:
@@ -1043,6 +1086,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             )
             return 1
 
+        rotation = _build_rotation_config(args)
         config = ProxyConfig(
             upstream_base_url=args.upstream,
             host=args.host,
@@ -1057,6 +1101,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             timeout=args.timeout,
             auth_file=getattr(args, "auth_file", None),
             auth_provider=getattr(args, "auth_provider", "github-copilot"),
+            rotation=rotation,
         )
         app = create_proxy_app(config)
 
