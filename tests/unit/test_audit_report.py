@@ -521,3 +521,27 @@ class TestCLIAuditReport:
         assert rc == 1
         err = capsys.readouterr().err.lower()
         assert "invalid" in err or "format" in err or "error" in err
+
+    def test_invalid_before_format_exits_with_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--before with invalid datetime format exits with error.
+
+        Symmetric counterpart to test_invalid_after_format_exits_with_error.
+        Regression test for #222.
+        """
+        from agentguard.cli import main
+
+        _create_session(tmp_path, "s1", [{"action": "a"}])
+        rc = main(
+            [
+                "audit",
+                "report",
+                str(tmp_path),
+                "--before",
+                "not-a-date",
+            ]
+        )
+        assert rc == 1
+        err = capsys.readouterr().err.lower()
+        assert "invalid" in err or "format" in err or "error" in err
