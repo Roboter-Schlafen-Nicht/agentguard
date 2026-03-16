@@ -16,13 +16,16 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp import FastMCP
 
 from agentguard.audit.log import AuditLog
 from agentguard.policies.builtins import load_all_builtins
 from agentguard.policies.guard import Guard
+
+if TYPE_CHECKING:
+    from agentguard.audit.rotation import RotationConfig
 
 
 def create_server(
@@ -33,6 +36,7 @@ def create_server(
     auto_discover: bool = False,
     preset: str | None = None,
     trust_registry: str | None = None,
+    rotation: RotationConfig | None = None,
 ) -> FastMCP:
     """Create an AgentGuard MCP server.
 
@@ -52,6 +56,9 @@ def create_server(
         trust_registry: Path to the trust registry YAML file.
             If None, uses the default location
             (``~/.agentguard/trust-registry.yaml``).
+        rotation: Optional audit log rotation config. When set,
+            audit files are rotated when they exceed size or age
+            thresholds.
 
     Returns:
         A FastMCP application with tools registered.
@@ -140,7 +147,10 @@ def create_server(
         if audit_dir is not None:
             audit_path = Path(audit_dir)
             audit_path.mkdir(parents=True, exist_ok=True)
-            audit_log.append(audit_path / f"{session_id}.jsonl")
+            audit_log.append(
+                audit_path / f"{session_id}.jsonl",
+                rotation=rotation,
+            )
 
     # --- create FastMCP app -------------------------------------------
 

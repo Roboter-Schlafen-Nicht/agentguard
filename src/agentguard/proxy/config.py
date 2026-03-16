@@ -8,6 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agentguard.audit.rotation import RotationConfig
 
 
 @dataclass
@@ -49,6 +53,9 @@ class ProxyConfig:
             "<token>", ...}}`` (OpenCode auth.json format).
         auth_provider: Provider key to look up in the auth file.
             Defaults to ``"github-copilot"``.
+        rotation: Optional audit log rotation config. When set,
+            audit files are rotated when they exceed size or age
+            thresholds.
     """
 
     upstream_base_url: str
@@ -66,6 +73,7 @@ class ProxyConfig:
     provider: str | None = None
     auth_file: str | None = None
     auth_provider: str = "github-copilot"
+    rotation: RotationConfig | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration."""

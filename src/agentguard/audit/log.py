@@ -7,6 +7,9 @@ tamper-evident, append-only log with hash chaining.
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime as _dt
+from datetime import timezone as _tz
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -14,6 +17,8 @@ from agentguard.audit.models import AuditEntry
 
 if TYPE_CHECKING:
     from datetime import datetime
+
+    from agentguard.audit.rotation import RotationConfig
 
 
 class AuditLog:
@@ -103,7 +108,12 @@ class AuditLog:
                 line = json.dumps(entry.to_dict(), ensure_ascii=True)
                 f.write(line + "\n")
 
-    def append(self, path: str | Path) -> None:
+    def append(
+        self,
+        path: str | Path,
+        *,
+        rotation: RotationConfig | None = None,
+    ) -> None:
         """Append only new entries to a JSONL file.
 
         Writes entries added since the last ``append()`` call using
@@ -111,12 +121,19 @@ class AuditLog:
         entries are never rewritten. Creates the file and parent
         directories if they don't exist.
 
+        When *rotation* is provided and the existing file exceeds
+        the configured thresholds, the current file is renamed to
+        ``{stem}.{timestamp}.jsonl`` before writing. The in-memory
+        hash chain is unaffected — only file splitting changes.
+
         This is the preferred persistence method during a session
         because it provides true append-only semantics at the
         filesystem level.
 
         Args:
             path: File path to append to.
+            rotation: Optional rotation config. When set, the file
+                is rotated if it exceeds size or age thresholds.
         """
         new_entries = self._entries[self._persisted_count :]
         if not new_entries:
@@ -124,6 +141,16 @@ class AuditLog:
 
         file_path = Path(path)
         file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Rotate the existing file if thresholds are exceeded.
+        if rotation is not None and file_path.exists():
+            stat = file_path.stat()
+            file_age = time.time() - stat.st_mtime
+            if rotation.should_rotate(stat.st_size, file_age):
+                ts = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%S%f")
+                stem = file_path.stem
+                rotated = file_path.with_name(f"{stem}.{ts}.jsonl")
+                file_path.rename(rotated)
 
         with file_path.open("a", encoding="utf-8") as f:
             for entry in new_entries:

@@ -589,4 +589,7 @@ class GuardMiddleware:
         if self.config.audit_dir is not None:
             audit_path = Path(self.config.audit_dir)
             audit_path.mkdir(parents=True, exist_ok=True)
-            self.audit_log.append(audit_path / f"{self.session_id}.jsonl")
+            self.audit_log.append(
+                audit_path / f"{self.session_id}.jsonl",
+                rotation=self.config.rotation,
+            )

@@ -636,6 +636,7 @@ class TestServeCommand:
             auto_discover=False,
             preset=None,
             trust_registry=None,
+            rotation=None,
         )
         mock_app.run.assert_called_once()
 
@@ -673,6 +674,7 @@ class TestServeCommand:
             auto_discover=True,
             preset=None,
             trust_registry=None,
+            rotation=None,
         )
         mock_app.run.assert_called_once()
 
@@ -694,6 +696,7 @@ class TestServeCommand:
             auto_discover=False,
             preset=None,
             trust_registry=None,
+            rotation=None,
         )
 
     def test_serve_auto_discover_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -714,6 +717,7 @@ class TestServeCommand:
             auto_discover=True,
             preset=None,
             trust_registry=None,
+            rotation=None,
         )
 
     def test_serve_nonexistent_policy_dir(self) -> None:
