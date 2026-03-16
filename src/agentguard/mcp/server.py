@@ -25,6 +25,7 @@ from agentguard.policies.builtins import load_all_builtins
 from agentguard.policies.guard import Guard
 
 if TYPE_CHECKING:
+    from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
 
 
@@ -37,6 +38,7 @@ def create_server(
     preset: str | None = None,
     trust_registry: str | None = None,
     rotation: RotationConfig | None = None,
+    retention: RetentionConfig | None = None,
 ) -> FastMCP:
     """Create an AgentGuard MCP server.
 
@@ -59,6 +61,9 @@ def create_server(
         rotation: Optional audit log rotation config. When set,
             audit files are rotated when they exceed size or age
             thresholds.
+        retention: Optional audit log retention config. When set,
+            old rotated files are deleted after rotation based on
+            file count, age, or total size limits.
 
     Returns:
         A FastMCP application with tools registered.
@@ -150,6 +155,7 @@ def create_server(
             audit_log.append(
                 audit_path / f"{session_id}.jsonl",
                 rotation=rotation,
+                retention=retention,
             )
 
     # --- create FastMCP app -------------------------------------------

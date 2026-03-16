@@ -592,4 +592,5 @@ class GuardMiddleware:
             self.audit_log.append(
                 audit_path / f"{self.session_id}.jsonl",
                 rotation=self.config.rotation,
+                retention=self.config.retention,
             )

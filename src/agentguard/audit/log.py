@@ -18,6 +18,7 @@ from agentguard.audit.models import AuditEntry
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
 
 
@@ -113,6 +114,7 @@ class AuditLog:
         path: str | Path,
         *,
         rotation: RotationConfig | None = None,
+        retention: RetentionConfig | None = None,
     ) -> None:
         """Append only new entries to a JSONL file.
 
@@ -126,6 +128,9 @@ class AuditLog:
         ``{stem}.{timestamp}.jsonl`` before writing. The in-memory
         hash chain is unaffected — only file splitting changes.
 
+        When *retention* is provided, old rotated files are deleted
+        after rotation according to the retention policy.
+
         This is the preferred persistence method during a session
         because it provides true append-only semantics at the
         filesystem level.
@@ -134,6 +139,8 @@ class AuditLog:
             path: File path to append to.
             rotation: Optional rotation config. When set, the file
                 is rotated if it exceeds size or age thresholds.
+            retention: Optional retention config. When set, old
+                rotated files are purged after rotation.
         """
         new_entries = self._entries[self._persisted_count :]
         if not new_entries:
@@ -143,14 +150,18 @@ class AuditLog:
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Rotate the existing file if thresholds are exceeded.
+        rotated_this_call = False
         if rotation is not None and file_path.exists():
             stat = file_path.stat()
             file_age = time.time() - stat.st_mtime
             if rotation.should_rotate(stat.st_size, file_age):
                 ts = _dt.now(_tz.utc).strftime("%Y%m%dT%H%M%S%f")
                 stem = file_path.stem
-                rotated = file_path.with_name(f"{stem}.{ts}.jsonl")
+                rotated = file_path.with_name(
+                    f"{stem}.{ts}.jsonl",
+                )
                 file_path.rename(rotated)
+                rotated_this_call = True
 
         with file_path.open("a", encoding="utf-8") as f:
             for entry in new_entries:
@@ -158,6 +169,16 @@ class AuditLog:
                 f.write(line + "\n")
 
         self._persisted_count = len(self._entries)
+
+        # Enforce retention after rotation.
+        if retention is not None and rotated_this_call:
+            from agentguard.audit.retention import enforce_retention
+
+            enforce_retention(
+                file_path.parent,
+                retention,
+                active_file=file_path,
+            )
 
     @classmethod
     def load_directory(cls, path: str | Path) -> list[AuditLog]:
