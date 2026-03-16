@@ -472,8 +472,25 @@ class TestCombinedAuditTimeline:
         # Both allowed and denied present
         assert "allowed" in results
         assert "denied" in results
-        assert results.count("denied") >= 1, "Expected at least one denial"
-        assert results.count("allowed") >= 1, "Expected at least one allowed action"
+        # 2 denied: shell_execute (MCP) + ghp-token llm_request (proxy)
+        assert results.count("denied") == 2, (
+            f"Expected 2 denials, got {results.count('denied')}"
+        )
+        # 3 allowed: file_write + file_read (MCP) + clean llm_request
+        assert results.count("allowed") == 3, (
+            f"Expected 3 allowed, got {results.count('allowed')}"
+        )
+
+        # Verify the specific proxy denial entry for the secret
+        proxy_denials = [
+            e
+            for e in all_entries
+            if e["action"] == "llm_request" and e["result"] == "denied"
+        ]
+        assert len(proxy_denials) == 1, (
+            f"Expected 1 proxy denial, got {len(proxy_denials)}"
+        )
+        assert proxy_denials[0]["metadata"]["denied_by"] == ("no-secret-in-prompt")
 
         # At least 5 entries: 3 MCP + 2 proxy
         assert len(all_entries) == 5, (
