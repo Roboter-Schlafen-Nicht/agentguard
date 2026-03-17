@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from agentguard.audit.models import AuditEntry
     from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
+    from agentguard.policies.guard import Guard
+    from agentguard.sandbox.models import Scenario
     from agentguard.trust.registry import TrustRegistry
 
 try:
@@ -47,6 +49,7 @@ class _Parsers:
         self.policies: argparse.ArgumentParser | None = None
         self.audit: argparse.ArgumentParser | None = None
         self.trust: argparse.ArgumentParser | None = None
+        self.sandbox: argparse.ArgumentParser | None = None
 
 
 _parsers = _Parsers()
@@ -322,6 +325,117 @@ def _build_parser() -> argparse.ArgumentParser:
         "--registry",
         help="Path to the trust registry YAML file.",
     )
+    # --- sandbox ---
+    sandbox_parser = subparsers.add_parser(
+        "sandbox", help="Test policies against scenarios before deployment."
+    )
+    sandbox_sub = sandbox_parser.add_subparsers(dest="sandbox_command")
+
+    # sandbox run
+    sandbox_run = sandbox_sub.add_parser("run", help="Run scenarios against policies.")
+    sandbox_run.add_argument(
+        "--scenarios",
+        required=True,
+        help="Path to scenario YAML file or directory.",
+    )
+    sandbox_run.add_argument(
+        "--builtins",
+        action="store_true",
+        help="Load all built-in policies.",
+    )
+    sandbox_run.add_argument(
+        "--policy",
+        action="append",
+        default=[],
+        help="Path to a policy YAML file (can be repeated).",
+    )
+    sandbox_run.add_argument(
+        "--policy-dir",
+        help="Directory containing policy YAML files.",
+    )
+    sandbox_run.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+
+    # sandbox gate
+    sandbox_gate = sandbox_sub.add_parser(
+        "gate", help="Check production readiness against thresholds."
+    )
+    sandbox_gate.add_argument(
+        "--scenarios",
+        required=True,
+        help="Path to scenario YAML file or directory.",
+    )
+    sandbox_gate.add_argument(
+        "--builtins",
+        action="store_true",
+        help="Load all built-in policies.",
+    )
+    sandbox_gate.add_argument(
+        "--policy",
+        action="append",
+        default=[],
+        help="Path to a policy YAML file (can be repeated).",
+    )
+    sandbox_gate.add_argument(
+        "--policy-dir",
+        help="Directory containing policy YAML files.",
+    )
+    sandbox_gate.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="Output format (default: text).",
+    )
+    sandbox_gate.add_argument(
+        "--min-tpr",
+        type=float,
+        default=0.95,
+        help="Minimum true positive rate (default: 0.95).",
+    )
+    sandbox_gate.add_argument(
+        "--max-fpr",
+        type=float,
+        default=0.05,
+        help="Maximum false positive rate (default: 0.05).",
+    )
+    sandbox_gate.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=0.90,
+        help="Minimum accuracy (default: 0.90).",
+    )
+
+    # sandbox report
+    sandbox_report = sandbox_sub.add_parser(
+        "report", help="Generate a detailed validation report (JSON)."
+    )
+    sandbox_report.add_argument(
+        "--scenarios",
+        required=True,
+        help="Path to scenario YAML file or directory.",
+    )
+    sandbox_report.add_argument(
+        "--builtins",
+        action="store_true",
+        help="Load all built-in policies.",
+    )
+    sandbox_report.add_argument(
+        "--policy",
+        action="append",
+        default=[],
+        help="Path to a policy YAML file (can be repeated).",
+    )
+    sandbox_report.add_argument(
+        "--policy-dir",
+        help="Directory containing policy YAML files.",
+    )
+
+    _parsers.sandbox = sandbox_parser
+
     # --- scan ---
     scan_parser = subparsers.add_parser(
         "scan", help="Scan an MCP server package for security risks."
@@ -1146,6 +1260,164 @@ def _cmd_audit_purge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sandbox_load_guard(args: argparse.Namespace) -> Guard:
+    """Build a Guard from sandbox CLI args."""
+    from agentguard.policies.builtins import load_all_builtins
+    from agentguard.policies.guard import Guard
+
+    guard = Guard()
+
+    if args.builtins:
+        for policy in load_all_builtins():
+            guard.add_policy(policy)
+
+    for policy_path in getattr(args, "policy", []):
+        guard.load_policy_file(policy_path)
+
+    policy_dir = getattr(args, "policy_dir", None)
+    if policy_dir:
+        for yaml_file in sorted(Path(policy_dir).glob("*.yaml")):
+            guard.load_policy_file(yaml_file)
+
+    return guard
+
+
+def _sandbox_load_scenarios(scenarios_path: str) -> list[Scenario]:
+    """Load scenarios from a file or directory path."""
+    from agentguard.sandbox.models import (
+        load_scenarios_from_directory,
+        load_scenarios_from_file,
+    )
+
+    path = Path(scenarios_path)
+    if path.is_dir():
+        return load_scenarios_from_directory(path)
+    elif path.is_file():
+        return load_scenarios_from_file(path)
+    else:
+        msg = f"Scenario path not found: {scenarios_path}"
+        raise FileNotFoundError(msg)
+
+
+def _cmd_sandbox_run(args: argparse.Namespace) -> int:
+    """Run scenarios against policies and show results."""
+    from agentguard.sandbox.runner import run_suite
+
+    try:
+        scenarios = _sandbox_load_scenarios(args.scenarios)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    guard = _sandbox_load_guard(args)
+    results = run_suite(scenarios, guard)
+
+    passed = sum(1 for r in results if r.passed)
+    failed = len(results) - passed
+
+    if getattr(args, "format", "text") == "json":
+        data = {
+            "results": [
+                {
+                    "scenario": r.scenario_name,
+                    "expected": r.expected,
+                    "actual": r.actual,
+                    "passed": r.passed,
+                    "failure_reason": r.failure_reason,
+                }
+                for r in results
+            ],
+            "total": len(results),
+            "passed": passed,
+            "failed": failed,
+        }
+        print(json.dumps(data, indent=2))
+    else:
+        for r in results:
+            status = "PASS" if r.passed else "FAIL"
+            print(f"  [{status}] {r.scenario_name}")
+            if r.failure_reason:
+                print(f"         {r.failure_reason}")
+        print()
+        print(f"{len(results)} scenarios: {passed} passed, {failed} failed")
+
+    return 0 if failed == 0 else 1
+
+
+def _cmd_sandbox_gate(args: argparse.Namespace) -> int:
+    """Check production readiness against thresholds."""
+    from agentguard.sandbox.gate import GateThresholds, check_gate
+    from agentguard.sandbox.validator import validate
+
+    try:
+        scenarios = _sandbox_load_scenarios(args.scenarios)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    guard = _sandbox_load_guard(args)
+    report = validate(scenarios, guard)
+
+    thresholds = GateThresholds(
+        min_tpr=args.min_tpr,
+        max_fpr=args.max_fpr,
+        min_accuracy=args.min_accuracy,
+    )
+    verdict = check_gate(report, thresholds)
+
+    if getattr(args, "format", "text") == "json":
+        data = {
+            "passed": verdict.passed,
+            "reasons": verdict.reasons,
+            "metrics": report.to_dict(),
+        }
+        print(json.dumps(data, indent=2))
+    else:
+        if verdict.passed:
+            print("GATE PASSED: Policy configuration is production-ready.")
+        else:
+            print("GATE FAILED: Policy configuration does NOT meet thresholds.")
+            for reason in verdict.reasons:
+                print(f"  - {reason}")
+        print()
+        print(
+            f"Metrics: TPR={report.true_positive_rate:.3f} "
+            f"FPR={report.false_positive_rate:.3f} "
+            f"Accuracy={report.accuracy:.3f}"
+        )
+
+    return 0 if verdict.passed else 1
+
+
+def _cmd_sandbox_report(args: argparse.Namespace) -> int:
+    """Generate a detailed validation report (JSON)."""
+    from agentguard.sandbox.validator import validate
+
+    try:
+        scenarios = _sandbox_load_scenarios(args.scenarios)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    guard = _sandbox_load_guard(args)
+    report = validate(scenarios, guard)
+
+    data = report.to_dict()
+    # Add per-scenario details
+    data["scenarios"] = [
+        {
+            "scenario": r.scenario_name,
+            "expected": r.expected,
+            "actual": r.actual,
+            "passed": r.passed,
+            "failure_reason": r.failure_reason,
+        }
+        for r in report.results
+    ]
+    print(json.dumps(data, indent=2))
+    return 0
+
+
 def _cmd_serve(args: argparse.Namespace) -> int:
     """Start the AgentGuard MCP server."""
     if create_server is None:
@@ -1351,6 +1623,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "scan":
         return _cmd_scan(args)
+
+    if args.command == "sandbox":
+        if args.sandbox_command == "run":
+            return _cmd_sandbox_run(args)
+        if args.sandbox_command == "gate":
+            return _cmd_sandbox_gate(args)
+        if args.sandbox_command == "report":
+            return _cmd_sandbox_report(args)
+        if _parsers.sandbox is not None:
+            _parsers.sandbox.print_help()
+        return 1
 
     if args.command == "serve":
         return _cmd_serve(args)

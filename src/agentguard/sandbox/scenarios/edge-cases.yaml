@@ -1,0 +1,259 @@
+# Edge-case scenarios: boundary cases that exercise the limits of
+# pattern matching. Each scenario documents WHY the expected outcome
+# is what it is.
+
+---
+name: sk-prefix-exactly-20-chars
+description: "sk- followed by exactly 20 alphanumeric chars (minimum match length)"
+expected_outcome: deny
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "key: sk-AAAAAAAAAAAAAAAAAAAA"
+
+---
+name: sk-prefix-19-chars
+description: "sk- followed by 19 chars (just below threshold, should be allowed)"
+expected_outcome: allow
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "key: sk-AAAAAAAAAAAAAAAAAAA"
+
+---
+name: ghp-token-exactly-36-chars
+description: "ghp_ followed by exactly 36 alphanumeric chars (minimum match)"
+expected_outcome: deny
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "token: ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+---
+name: ghp-token-35-chars
+description: "ghp_ followed by 35 chars (just below threshold)"
+expected_outcome: allow
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "token: ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+---
+name: bearer-jwt-minimal
+description: "Bearer with minimal JWT (eyJ prefix, the critical pattern)"
+expected_outcome: deny
+tags: [secrets, llm-request, bearer, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9"
+
+---
+name: bearer-opaque-exactly-32-chars
+description: "Bearer with exactly 32-char opaque token (boundary)"
+expected_outcome: deny
+tags: [secrets, llm-request, bearer, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+---
+name: bearer-opaque-31-chars
+description: "Bearer with 31-char opaque token (just below threshold)"
+expected_outcome: allow
+tags: [secrets, llm-request, bearer, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Bearer AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+---
+name: password-equals-literal-6-chars
+description: "Password assignment with 6-char literal (minimum match after the pattern)"
+expected_outcome: deny
+tags: [secrets, llm-request, password, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = Secret1"
+
+---
+name: password-equals-dollar-ref
+description: "Password assignment with dollar-sign variable ref (excluded by pattern)"
+expected_outcome: allow
+tags: [secrets, llm-request, password, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = $DB_PASSWORD"
+
+---
+name: password-colon-env-lookup
+description: "Password with colon separator and env lookup"
+expected_outcome: allow
+tags: [secrets, llm-request, password, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password: ${DATABASE_PASSWORD}"
+
+---
+name: password-equals-quoted-string
+description: "Password assignment with quoted string (excluded by pattern)"
+expected_outcome: allow
+tags: [secrets, llm-request, password, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = \"placeholder\""
+
+---
+name: password-equals-single-quoted
+description: "Password assignment with single-quoted string (excluded by pattern)"
+expected_outcome: allow
+tags: [secrets, llm-request, password, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = 'placeholder'"
+
+---
+name: akia-exactly-16-uppercase
+description: "AKIA followed by exactly 16 uppercase/digit chars (valid AWS key ID format)"
+expected_outcome: deny
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "aws_key: AKIAIOSFODNN7EXAMPLE"
+
+---
+name: postgres-url-with-credentials
+description: "PostgreSQL URL with embedded user:password (must deny)"
+expected_outcome: deny
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "postgresql://user:pass@localhost:5432/db"
+
+---
+name: postgres-url-no-password
+description: "PostgreSQL URL with user but no password"
+expected_outcome: allow
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "postgresql://localhost:5432/db"
+
+---
+name: mongodb-srv-with-credentials
+description: "MongoDB SRV URL with embedded credentials"
+expected_outcome: deny
+tags: [secrets, llm-request, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "mongodb+srv://admin:hunter2@cluster0.abc.mongodb.net/mydb"
+
+---
+name: env-file-path-write
+description: "Writing to .env file (path-based deny, regardless of content)"
+expected_outcome: deny
+tags: [secrets, file-write, edge-case]
+actions:
+  - kind: file_write
+    params:
+      path: /project/.env
+      content: "# empty env file"
+
+---
+name: env-example-file-write
+description: "Writing to .env.example (path matches .env. pattern)"
+expected_outcome: deny
+tags: [secrets, file-write, edge-case]
+actions:
+  - kind: file_write
+    params:
+      path: /project/.env.example
+      content: "DATABASE_URL=your_database_url_here"
+
+---
+name: pem-file-write
+description: "Writing to a .pem file (blocked by path pattern)"
+expected_outcome: deny
+tags: [secrets, file-write, edge-case]
+actions:
+  - kind: file_write
+    params:
+      path: /project/server.pem
+      content: "certificate data here"
+
+---
+name: key-file-write
+description: "Writing to a .key file (blocked by path pattern)"
+expected_outcome: deny
+tags: [secrets, file-write, edge-case]
+actions:
+  - kind: file_write
+    params:
+      messages: "key data"
+      path: /project/server.key
+
+---
+name: file-write-api-key-assignment
+description: "Writing file content with API_KEY = pattern"
+expected_outcome: deny
+tags: [secrets, file-write, edge-case]
+actions:
+  - kind: file_write
+    params:
+      path: /project/settings.py
+      content: "API_KEY = some_value_here"
+
+---
+name: file-write-mentions-api-key-in-comment
+description: "Writing file with API_KEY mentioned in a comment (not assignment)"
+expected_outcome: allow
+tags: [secrets, file-write, edge-case]
+actions:
+  - kind: file_write
+    params:
+      path: /project/docs.py
+      content: "# The API_KEY should be set via environment variable"
+
+---
+# NOTE: Slack and Discord webhook URL scenarios are tested
+# programmatically in test_e2e_validation.py to avoid triggering
+# GitHub Push Protection on the YAML file.
+# See: TestWebhookScenarios
+
+---
+name: multiple-actions-mixed-benign
+description: "Multi-action scenario where all actions are benign"
+expected_outcome: allow
+tags: [llm-request, file-write, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "How do I set up a Python project?"
+  - kind: file_write
+    params:
+      path: /project/setup.py
+      content: "from setuptools import setup\nsetup(name='myproject')"
+
+---
+name: password-equals-function-call
+description: "Password assigned via function call (not a literal secret)"
+expected_outcome: allow
+tags: [secrets, llm-request, password, edge-case]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = get_password_from_vault()"
