@@ -24,7 +24,9 @@ class OpenAIProvider:
         """Provider identifier."""
         return "openai"
 
-    def extract_request_params(self, body: bytes) -> dict[str, str]:
+    def extract_request_params(
+        self, body: bytes, *, seen_count: int | None = None
+    ) -> dict[str, str]:
         """Extract scannable parameters from an OpenAI request body.
 
         Parses the JSON body and extracts:
@@ -33,8 +35,16 @@ class OpenAIProvider:
         - ``content``: All user/assistant message content concatenated.
         - ``model``: Model name if present.
 
+        When ``seen_count`` is provided, only messages at index
+        ``seen_count`` and beyond are extracted.  This supports delta
+        scanning: the proxy tracks how many messages it has already
+        scanned in a conversation and only re-scans new ones.
+
         Args:
             body: Raw request body bytes.
+            seen_count: Number of messages already scanned in this
+                conversation.  If None (default), all messages are
+                extracted for backward compatibility.
 
         Returns:
             Dictionary of parameter keys to string values.
@@ -51,6 +61,10 @@ class OpenAIProvider:
 
         messages = data.get("messages")
         if isinstance(messages, list):
+            # Apply delta: skip messages already scanned
+            if seen_count is not None and seen_count > 0:
+                messages = messages[seen_count:]
+
             all_content: list[str] = []
             system_parts: list[str] = []
             user_assistant_parts: list[str] = []
