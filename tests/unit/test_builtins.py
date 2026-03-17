@@ -726,7 +726,8 @@ class TestNoSecretInPrompt:
         decision = policy.evaluate(action)
         assert decision.denied
 
-    def test_blocks_password_assignment(self) -> None:
+    def test_blocks_password_with_literal_value(self) -> None:
+        """Block password assignments with actual literal values."""
         policy = load_builtin("no-secret-in-prompt")
         action = Action(
             kind="llm_request",
@@ -735,7 +736,8 @@ class TestNoSecretInPrompt:
         decision = policy.evaluate(action)
         assert decision.denied
 
-    def test_blocks_bearer_token(self) -> None:
+    def test_blocks_bearer_jwt(self) -> None:
+        """Block Bearer followed by a JWT (eyJ... header)."""
         policy = load_builtin("no-secret-in-prompt")
         action = Action(
             kind="llm_request",
@@ -743,6 +745,110 @@ class TestNoSecretInPrompt:
         )
         decision = policy.evaluate(action)
         assert decision.denied
+
+    def test_blocks_bearer_long_opaque_token(self) -> None:
+        """Block Bearer followed by a long opaque token (32+ chars)."""
+        policy = load_builtin("no-secret-in-prompt")
+        action = Action(
+            kind="llm_request",
+            params={"messages": "Bearer " + "a" * 32},
+        )
+        decision = policy.evaluate(action)
+        assert decision.denied
+
+    def test_allows_bearer_concept_in_docs(self) -> None:
+        """Allow discussion of Bearer authentication in documentation."""
+        policy = load_builtin("no-secret-in-prompt")
+        for text in [
+            "Use Bearer token in the Authorization header",
+            "The Bearer scheme is defined in RFC 6750",
+            "Bearer authentication sends credentials as tokens",
+        ]:
+            action = Action(
+                kind="llm_request",
+                params={"messages": text},
+            )
+            decision = policy.evaluate(action)
+            assert decision.allowed, f"False positive on: {text}"
+
+    def test_allows_bearer_with_placeholder(self) -> None:
+        """Allow Bearer with template variables and placeholders."""
+        policy = load_builtin("no-secret-in-prompt")
+        for text in [
+            "Authorization: Bearer $TOKEN",
+            "Authorization: Bearer ${API_TOKEN}",
+            "Authorization: Bearer <your-token>",
+            "Bearer YOUR_TOKEN_HERE",
+            'curl -H "Authorization: Bearer $TOKEN"',
+        ]:
+            action = Action(
+                kind="llm_request",
+                params={"messages": text},
+            )
+            decision = policy.evaluate(action)
+            assert decision.allowed, f"False positive on: {text}"
+
+    def test_allows_password_env_var_reference(self) -> None:
+        """Allow password = $ENV_VAR or os.getenv patterns."""
+        policy = load_builtin("no-secret-in-prompt")
+        for text in [
+            "password: ${DB_PASSWORD}",
+            "POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev}",
+            'password = os.getenv("DB_PASSWORD")',
+            "password: $DB_PASS",
+        ]:
+            action = Action(
+                kind="llm_request",
+                params={"messages": text},
+            )
+            decision = policy.evaluate(action)
+            assert decision.allowed, f"False positive on: {text}"
+
+    def test_allows_password_redacted(self) -> None:
+        """Allow password with redacted/masked values."""
+        policy = load_builtin("no-secret-in-prompt")
+        for text in [
+            "password: ****",
+            "password: <redacted>",
+            "password: [REDACTED]",
+            "password = ********",
+        ]:
+            action = Action(
+                kind="llm_request",
+                params={"messages": text},
+            )
+            decision = policy.evaluate(action)
+            assert decision.allowed, f"False positive on: {text}"
+
+    def test_allows_password_type_annotation(self) -> None:
+        """Allow password in Python type annotations and field definitions."""
+        policy = load_builtin("no-secret-in-prompt")
+        for text in [
+            'password: str = Field(..., description="User password")',
+            "password: str",
+            "password: Optional[str] = None",
+        ]:
+            action = Action(
+                kind="llm_request",
+                params={"messages": text},
+            )
+            decision = policy.evaluate(action)
+            assert decision.allowed, f"False positive on: {text}"
+
+    def test_allows_password_empty_value(self) -> None:
+        """Allow password with empty string values."""
+        policy = load_builtin("no-secret-in-prompt")
+        for text in [
+            'password = ""',
+            "password = ''",
+            "password:",
+        ]:
+            action = Action(
+                kind="llm_request",
+                params={"messages": text},
+            )
+            decision = policy.evaluate(action)
+            assert decision.allowed, f"False positive on: {text}"
 
     def test_blocks_database_connection_string(self) -> None:
         policy = load_builtin("no-secret-in-prompt")

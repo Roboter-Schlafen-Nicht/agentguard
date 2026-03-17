@@ -1,0 +1,238 @@
+# True Negative scenarios: benign content that MUST be allowed.
+# These test for false positives — the exact patterns that caused the
+# production context-poisoning issue when legitimate code was denied.
+
+---
+name: bearer-in-documentation
+description: The word Bearer in API documentation (no actual token)
+expected_outcome: allow
+tags: [secrets, llm-request, bearer, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "The Authorization header uses Bearer tokens. Add the header like: Authorization: Bearer <token>"
+
+---
+name: bearer-with-placeholder
+description: Bearer token with an obvious placeholder value
+expected_outcome: allow
+tags: [secrets, llm-request, bearer, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Authorization: Bearer YOUR_TOKEN_HERE"
+
+---
+name: bearer-with-short-example
+description: Bearer token with a short example value (under 32 chars)
+expected_outcome: allow
+tags: [secrets, llm-request, bearer, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Authorization: Bearer abc123"
+
+---
+name: bearer-in-code-comment
+description: Bearer mentioned in a code comment explaining auth flow
+expected_outcome: allow
+tags: [secrets, llm-request, bearer, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "# This endpoint requires a Bearer token for authentication"
+
+---
+name: password-type-annotation
+description: Password in a Python type annotation (not a real credential)
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "def create_user(username: str, password: str) -> User:"
+
+---
+name: password-optional-type
+description: Password as Optional type in function signature
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password: Optional[str] = None"
+
+---
+name: password-env-var-reference
+description: Password read from environment variable (not hardcoded)
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = os.environ.get('DB_PASSWORD')"
+
+---
+name: password-input-prompt
+description: Password read from user input at runtime
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = input('Enter your password: ')"
+
+---
+name: password-placeholder-stars
+description: Password shown as masked placeholder
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = '********'"
+
+---
+name: password-none-assignment
+description: Password initialized to None
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = None"
+
+---
+name: password-in-docstring
+description: Password mentioned in a docstring explaining usage
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: 'The password parameter should be at least 8 characters long and contain uppercase, lowercase, and numbers.'
+
+---
+name: sk-in-variable-name
+description: Variable name containing sk- prefix (not an API key)
+expected_outcome: allow
+tags: [secrets, llm-request, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "sk_buffer_size = 1024"
+
+---
+name: generic-code-discussion
+description: General coding discussion with no secrets
+expected_outcome: allow
+tags: [llm-request, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "How do I write a Python function that reads a CSV file and returns a list of dictionaries?"
+
+---
+name: config-file-write-no-secrets
+description: Writing a config file without any secrets
+expected_outcome: allow
+tags: [file-write, true-negative]
+actions:
+  - kind: file_write
+    params:
+      path: /project/config.yaml
+      content: "database:\n  host: localhost\n  port: 5432\n  name: myapp"
+
+---
+name: python-file-write-no-secrets
+description: Writing a Python file with no credentials
+expected_outcome: allow
+tags: [file-write, true-negative]
+actions:
+  - kind: file_write
+    params:
+      path: /project/utils.py
+      content: "def calculate_total(items):\n    return sum(item.price for item in items)"
+
+---
+name: readme-file-write
+description: Writing a README with setup instructions mentioning tokens generically
+expected_outcome: allow
+tags: [file-write, true-negative]
+actions:
+  - kind: file_write
+    params:
+      path: /project/README.md
+      content: "# Setup\n\n1. Create a `.env` file with your API key\n2. Run `npm install`\n3. Run `npm start`"
+
+---
+name: postgres-url-without-credentials
+description: Database URL without embedded password
+expected_outcome: allow
+tags: [secrets, llm-request, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "The connection string format is: postgresql://host:port/dbname"
+
+---
+name: webhook-documentation
+description: Explaining webhook concepts without real URLs
+expected_outcome: allow
+tags: [secrets, llm-request, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Slack webhooks let you post messages to channels. Configure one in the Slack API dashboard."
+
+---
+name: private-key-in-discussion
+description: Discussing private keys conceptually without actual key material
+expected_outcome: allow
+tags: [secrets, llm-request, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Generate an RSA private key with: ssh-keygen -t rsa -b 4096"
+
+---
+name: password-variable-from-config
+description: Password loaded from a config object
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = config['database']['password']"
+
+---
+name: test-file-write
+description: Writing a test file that mentions auth patterns in assertions
+expected_outcome: allow
+tags: [file-write, true-negative]
+actions:
+  - kind: file_write
+    params:
+      path: /project/tests/test_auth.py
+      content: "def test_login_requires_password():\n    response = client.post('/login', json={'username': 'test'})\n    assert response.status_code == 400"
+
+---
+name: password-hash-function
+description: Code that hashes a password (referring to password variable, not literal)
+expected_outcome: allow
+tags: [secrets, llm-request, password, true-negative]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password_hash = hashlib.sha256(password.encode()).hexdigest()"
+
+---
+name: docker-compose-no-secrets
+description: Docker compose file with environment variable references
+expected_outcome: allow
+tags: [file-write, true-negative]
+actions:
+  - kind: file_write
+    params:
+      path: /project/docker-compose.yaml
+      content: "services:\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: ${DB_PASSWORD}"

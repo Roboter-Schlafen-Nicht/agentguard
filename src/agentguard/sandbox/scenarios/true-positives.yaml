@@ -1,0 +1,125 @@
+# True Positive scenarios: real secrets that MUST be denied.
+# These test the Guard's ability to catch actual threats.
+
+---
+name: real-openai-api-key-in-prompt
+description: LLM request containing a real OpenAI API key
+expected_outcome: deny
+tags: [secrets, llm-request, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Use this API key to call OpenAI: sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+---
+name: real-github-pat-in-prompt
+description: LLM request containing a real GitHub PAT
+expected_outcome: deny
+tags: [secrets, llm-request, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Clone the repo using this token: ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+---
+name: real-aws-key-in-prompt
+description: LLM request containing an AWS access key
+expected_outcome: deny
+tags: [secrets, llm-request, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Use these credentials: AKIAIOSFODNN7EXAMPLE"
+
+---
+name: jwt-bearer-token-in-prompt
+description: LLM request with a real JWT Bearer token
+expected_outcome: deny
+tags: [secrets, llm-request, bearer, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0In0.dozjgNryP4J3jVmNHl0w5N"
+
+---
+name: private-key-block-in-prompt
+description: LLM request containing a PEM private key
+expected_outcome: deny
+tags: [secrets, llm-request, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Here is my key: -----BEGIN RSA PRIVATE KEY----- MIIEpAIBAAKCAQEA"
+
+---
+name: database-connection-string-in-prompt
+description: LLM request with a database connection string containing credentials
+expected_outcome: deny
+tags: [secrets, llm-request, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Connect to: postgresql://admin:s3cretP4ss@db.prod.internal:5432/myapp"
+
+---
+name: real-api-key-in-file-write
+description: Writing a file containing an actual API key
+expected_outcome: deny
+tags: [secrets, file-write, true-positive]
+actions:
+  - kind: file_write
+    params:
+      path: /tmp/config.py
+      content: "API_KEY = sk-abcdefghijklmnopqrstuvwxyz1234567890"
+
+---
+name: env-file-write
+description: Writing to a .env file
+expected_outcome: deny
+tags: [secrets, file-write, true-positive]
+actions:
+  - kind: file_write
+    params:
+      path: /project/.env
+      content: "DATABASE_URL=postgres://user:pass@localhost/db"
+
+---
+name: github-pat-in-file-write
+description: Writing a file containing a GitHub PAT
+expected_outcome: deny
+tags: [secrets, file-write, true-positive]
+actions:
+  - kind: file_write
+    params:
+      path: /tmp/deploy.sh
+      content: "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+---
+name: long-opaque-bearer-in-prompt
+description: Bearer token with long opaque value (32+ chars)
+expected_outcome: deny
+tags: [secrets, llm-request, bearer, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "Bearer aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+---
+name: password-literal-value-in-prompt
+description: Password assignment with a literal value
+expected_outcome: deny
+tags: [secrets, llm-request, password, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "password = MyS3cretP4ssword"
+
+---
+name: aws-secret-key-assignment
+description: AWS secret key assignment in prompt
+expected_outcome: deny
+tags: [secrets, llm-request, true-positive]
+actions:
+  - kind: llm_request
+    params:
+      messages: "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
