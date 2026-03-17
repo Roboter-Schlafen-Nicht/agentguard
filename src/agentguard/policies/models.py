@@ -115,6 +115,25 @@ class Rule:
     severity: Severity
     description: str | None = None
     scan: ScanTarget | None = None
+    min_unique_chars: int | None = None
+
+    def _has_sufficient_entropy(self, match: re.Match[str]) -> bool:
+        """Check if a regex match has enough unique characters.
+
+        When ``min_unique_chars`` is set, the matched text must contain
+        at least that many distinct characters.  This filters out
+        low-entropy placeholder strings like ``sk-proj-AAAAAAAAAA``
+        (only 8 unique chars) while still catching real secrets with
+        high entropy (20+ unique chars).
+
+        Returns True if the match has sufficient entropy (should deny),
+        or if ``min_unique_chars`` is not set (backward compat).
+        """
+        if self.min_unique_chars is None:
+            return True
+        matched_text = match.group()
+        unique_count = len(set(matched_text))
+        return unique_count >= self.min_unique_chars
 
     def matches(self, action: Action) -> bool:
         """Check if this rule matches the given action."""
@@ -124,8 +143,10 @@ class Rule:
             return self._matches_scan_target(action)
         for pattern in self.deny_patterns:
             for value in action.params.values():
-                if isinstance(value, str) and pattern.search(value):
-                    return True
+                if isinstance(value, str):
+                    match = pattern.search(value)
+                    if match and self._has_sufficient_entropy(match):
+                        return True
         return False
 
     def _matches_scan_target(self, action: Action) -> bool:
@@ -135,15 +156,21 @@ class Rule:
         if self.scan == ScanTarget.ALL:
             for pattern in self.deny_patterns:
                 for value in action.params.values():
-                    if isinstance(value, str) and pattern.search(value):
-                        return True
+                    if isinstance(value, str):
+                        match = pattern.search(value)
+                        if match and self._has_sufficient_entropy(match):
+                            return True
             return False
         # Scan only the specified key
         key = self.scan.value
         target_value = action.params.get(key)
         if not isinstance(target_value, str):
             return False
-        return any(pattern.search(target_value) for pattern in self.deny_patterns)
+        for pattern in self.deny_patterns:
+            match = pattern.search(target_value)
+            if match and self._has_sufficient_entropy(match):
+                return True
+        return False
 
 
 @dataclass(frozen=True)

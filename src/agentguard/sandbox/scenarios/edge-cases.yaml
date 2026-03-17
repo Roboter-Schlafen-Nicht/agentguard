@@ -10,7 +10,7 @@ tags: [secrets, llm-request, edge-case]
 actions:
   - kind: llm_request
     params:
-      messages: "key: sk-AAAAAAAAAAAAAAAAAAAA"
+      messages: "key: sk-AbCdEfGhIjKlMnOpQrSt"
 
 ---
 name: sk-prefix-19-chars
@@ -30,7 +30,7 @@ tags: [secrets, llm-request, edge-case]
 actions:
   - kind: llm_request
     params:
-      messages: "token: ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      messages: "token: ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"
 
 ---
 name: ghp-token-35-chars

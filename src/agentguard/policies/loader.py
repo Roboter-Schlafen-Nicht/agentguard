@@ -99,6 +99,7 @@ def _parse_rule(data: Any) -> Rule:
     severity = _parse_severity(data["severity"])
     patterns = [_parse_pattern(p) for p in data["deny"]]
     scan = _parse_scan_target(data["scan"]) if "scan" in data else None
+    min_unique_chars = _parse_min_unique_chars(data.get("min_unique_chars"))
 
     return Rule(
         action_kind=data["action"],
@@ -106,6 +107,7 @@ def _parse_rule(data: Any) -> Rule:
         severity=severity,
         description=data.get("description"),
         scan=scan,
+        min_unique_chars=min_unique_chars,
     )
 
 
@@ -154,3 +156,26 @@ def _parse_pattern(data: Any) -> re.Pattern[str]:
     except re.error as e:
         msg = f"Invalid regex pattern '{data['pattern']}': {e}"
         raise ValueError(msg) from e
+
+
+def _parse_min_unique_chars(value: Any) -> int | None:
+    """Parse and validate the optional min_unique_chars field.
+
+    Args:
+        value: Raw value from YAML (None if absent).
+
+    Returns:
+        Validated positive integer, or None if not set.
+
+    Raises:
+        ValueError: If the value is not a positive integer.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool):
+        msg = f"min_unique_chars must be a positive integer, got: {value!r}"
+        raise ValueError(msg)
+    if value < 1:
+        msg = f"min_unique_chars must be a positive integer (>= 1), got: {value}"
+        raise ValueError(msg)
+    return value

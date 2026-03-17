@@ -149,7 +149,7 @@ class TestEndToEndScenarioValidation:
         # still contains the original secret, so it should loop
         result = simulate_conversation(
             scenario_name="real-api-key",
-            initial_prompt="Use this key: sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            initial_prompt="Use this key: sk-proj-AbCdEfGhIjKlMnOpQrStUvWx",
             guard=guard,
             max_turns=5,
         )
