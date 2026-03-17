@@ -7,6 +7,7 @@ and either denies (403) or forwards the request upstream.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -67,6 +68,9 @@ class GuardMiddleware:
         self._auth_token: str | None = self._load_auth_token()
         self.session_id = f"proxy-{uuid.uuid4().hex[:12]}"
         self.audit_log = AuditLog(self.session_id)
+        # Delta scanning: track how many messages have been scanned
+        # per conversation, keyed by conversation fingerprint.
+        self._seen_messages: dict[str, int] = {}
 
     def _load_auth_token(self) -> str | None:
         """Load an auth token from the configured auth file.
@@ -221,18 +225,45 @@ class GuardMiddleware:
             )
 
         # Extract and scan request content
+        #
+        # Delta scanning: when enabled, compute a conversation
+        # fingerprint from the first message and only extract
+        # messages that haven't been scanned yet.
+        conv_fingerprint: str | None = None
+        seen_count: int | None = None
+        current_msg_count = 0
+
         try:
+            parsed_body = self._parse_body(body)
+            if (
+                self.config.delta_scanning
+                and parsed_body is not None
+                and isinstance(parsed_body.get("messages"), list)
+            ):
+                messages_list = parsed_body["messages"]
+                current_msg_count = len(messages_list)
+                conv_fingerprint = self._conversation_fingerprint(messages_list)
+                if conv_fingerprint is not None:
+                    seen_count = self._seen_messages.get(conv_fingerprint, 0)
+
             if self.provider is not None:
-                params = self.provider.extract_request_params(body)
+                if seen_count is not None:
+                    params = self.provider.extract_request_params(
+                        body, seen_count=seen_count
+                    )
+                else:
+                    params = self.provider.extract_request_params(body)
             else:
                 params = extract_request_params(body)
         except ValueError:
             # Non-JSON body — pass through without scanning
             params = {}
+            parsed_body = None
 
-        # Parse JSON body once for stats and streaming detection,
-        # avoiding redundant json.loads() calls.
-        parsed_body = self._parse_body(body)
+        # Parse JSON body for stats and streaming detection
+        # (reuse parsed_body if we already have it).
+        if parsed_body is None:
+            parsed_body = self._parse_body(body)
         message_count, token_est = self._extract_body_stats(parsed_body)
 
         if params:
@@ -262,6 +293,10 @@ class GuardMiddleware:
 
         # Forward to upstream
         import httpx
+
+        # Delta scanning: update seen count after successful scan
+        if conv_fingerprint is not None and current_msg_count > 0:
+            self._seen_messages[conv_fingerprint] = current_msg_count
 
         upstream_url = self.config.upstream_base_url + path
         if request.url.query:
@@ -594,3 +629,34 @@ class GuardMiddleware:
                 rotation=self.config.rotation,
                 retention=self.config.retention,
             )
+
+    @staticmethod
+    def _conversation_fingerprint(messages: list[Any]) -> str | None:
+        """Compute a fingerprint for a conversation from its first message.
+
+        The fingerprint is a SHA-256 hex digest of the first message's
+        role and content.  This lets the middleware identify the same
+        conversation across successive requests (where earlier messages
+        form a stable prefix).
+
+        Args:
+            messages: The messages array from the request body.
+
+        Returns:
+            A hex digest string, or None if the messages list is empty
+            or the first message has no usable content.
+        """
+        if not messages:
+            return None
+        first = messages[0]
+        if not isinstance(first, dict):
+            return None
+        role = first.get("role", "")
+        content = first.get("content", "")
+        if isinstance(content, list):
+            # Structured content blocks — serialize for fingerprinting
+            content = json.dumps(content, sort_keys=True)
+        if not isinstance(content, str):
+            content = str(content)
+        raw = f"{role}:{content}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]

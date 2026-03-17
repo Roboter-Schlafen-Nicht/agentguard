@@ -60,6 +60,10 @@ class ProxyConfig:
         retention: Optional audit log retention config. When set,
             old rotated files are deleted after rotation based on
             file count, age, or total size limits.
+        delta_scanning: When True, the proxy tracks which messages
+            in a conversation have already been scanned and only
+            scans new/unseen messages on subsequent requests.
+            Default False for backward compatibility.
     """
 
     upstream_base_url: str
@@ -79,6 +83,7 @@ class ProxyConfig:
     auth_provider: str = "github-copilot"
     rotation: RotationConfig | None = None
     retention: RetentionConfig | None = None
+    delta_scanning: bool = False
 
     def __post_init__(self) -> None:
         """Validate configuration."""

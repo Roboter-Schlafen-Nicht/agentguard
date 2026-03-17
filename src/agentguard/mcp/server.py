@@ -39,6 +39,7 @@ def create_server(
     trust_registry: str | None = None,
     rotation: RotationConfig | None = None,
     retention: RetentionConfig | None = None,
+    max_output_size: int = 51200,
 ) -> FastMCP:
     """Create an AgentGuard MCP server.
 
@@ -64,6 +65,10 @@ def create_server(
         retention: Optional audit log retention config. When set,
             old rotated files are deleted after rotation based on
             file count, age, or total size limits.
+        max_output_size: Maximum output size in bytes for tool
+            results.  Output exceeding this limit is truncated with
+            a notice appended.  Set to 0 to disable truncation.
+            Default: 51200 (50 KB).
 
     Returns:
         A FastMCP application with tools registered.
@@ -159,6 +164,34 @@ def create_server(
                 retention=retention,
             )
 
+    def _truncate_output(text: str) -> str:
+        """Truncate tool output if it exceeds max_output_size.
+
+        When ``max_output_size`` is 0, truncation is disabled and
+        the text is returned as-is.  Otherwise, if the text exceeds
+        the limit in bytes, it is truncated at the limit boundary
+        and a notice is appended.
+
+        Args:
+            text: The raw tool output string.
+
+        Returns:
+            The original text (if within limits) or the truncated
+            text with an appended notice.
+        """
+        if max_output_size <= 0:
+            return text
+        encoded = text.encode("utf-8")
+        if len(encoded) <= max_output_size:
+            return text
+        original_size = len(encoded)
+        # Truncate at byte boundary, then decode safely
+        truncated = encoded[:max_output_size].decode("utf-8", errors="ignore")
+        notice = (
+            f"\n... (output truncated from {original_size} to {max_output_size} bytes)"
+        )
+        return truncated + notice
+
     # --- create FastMCP app -------------------------------------------
 
     app = FastMCP("AgentGuard")
@@ -230,7 +263,7 @@ def create_server(
         if proc.returncode != 0:
             raise _tool_error(f"Command exited with code {proc.returncode}\n{output}")
 
-        return output if output else "(no output)"
+        return _truncate_output(output) if output else "(no output)"
 
     @app.tool()
     def file_read(path: str) -> str:
@@ -328,7 +361,7 @@ def create_server(
             metadata={"size": str(len(text))},
         )
         _save_audit()
-        return text
+        return _truncate_output(text)
 
     @app.tool()
     def file_write(path: str, content: str) -> str:
@@ -730,7 +763,7 @@ def create_server(
                 f"\n(Showing 100 of {match_count} matches. "
                 "Narrow your pattern for more specific results.)"
             )
-        return result_text
+        return _truncate_output(result_text)
 
     @app.tool()
     def file_list(path: str | None = None) -> str:

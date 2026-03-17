@@ -32,11 +32,16 @@ class Provider(Protocol):
         """Short identifier for this provider."""
         ...
 
-    def extract_request_params(self, body: bytes) -> dict[str, str]:
+    def extract_request_params(
+        self, body: bytes, *, seen_count: int | None = None
+    ) -> dict[str, str]:
         """Extract scannable parameters from a request body.
 
         Args:
             body: Raw request body bytes.
+            seen_count: Number of messages already scanned.  When
+                provided, only messages at index ``seen_count:`` are
+                extracted (delta scanning).
 
         Returns:
             Dictionary mapping parameter keys (``messages``, ``system``,
