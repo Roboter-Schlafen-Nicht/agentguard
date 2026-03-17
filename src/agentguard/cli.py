@@ -653,6 +653,14 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Delete oldest rotated logs until total size is under this limit.",
     )
+    proxy_parser.add_argument(
+        "--delta-scanning",
+        action="store_true",
+        help=(
+            "Enable delta scanning: only scan new messages in a conversation, "
+            "not the entire history on every request."
+        ),
+    )
 
     return parser
 
@@ -1550,6 +1558,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             auth_provider=getattr(args, "auth_provider", "github-copilot"),
             rotation=rotation,
             retention=retention,
+            delta_scanning=args.delta_scanning,
         )
         app = create_proxy_app(config)
 

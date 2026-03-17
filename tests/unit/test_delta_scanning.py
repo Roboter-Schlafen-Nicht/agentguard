@@ -476,3 +476,103 @@ class TestMiddlewareDeltaScanning:
 
         # No conversations should be tracked
         assert len(mw._seen_messages) == 0
+
+
+# ---------------------------------------------------------------------------
+# CLI: --delta-scanning flag
+# ---------------------------------------------------------------------------
+
+
+class TestDeltaScanningCLIFlag:
+    """Test that the proxy CLI exposes --delta-scanning."""
+
+    def test_parser_accepts_delta_scanning_flag(self) -> None:
+        """--delta-scanning should be accepted by the proxy subcommand."""
+        from agentguard.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "proxy",
+                "https://api.openai.com",
+                "--delta-scanning",
+            ]
+        )
+        assert args.delta_scanning is True
+
+    def test_parser_defaults_delta_scanning_to_false(self) -> None:
+        """Without --delta-scanning, the flag should default to False."""
+        from agentguard.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "proxy",
+                "https://api.openai.com",
+            ]
+        )
+        assert args.delta_scanning is False
+
+    def test_cmd_proxy_passes_delta_scanning_to_config(self) -> None:
+        """_cmd_proxy should pass delta_scanning to ProxyConfig."""
+        from unittest.mock import patch as _patch
+
+        from agentguard.cli import _build_parser, _cmd_proxy
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "proxy",
+                "https://api.openai.com",
+                "--delta-scanning",
+                "--preset",
+                "permissive",
+            ]
+        )
+
+        # Mock create_proxy_app and uvicorn.run to capture the config
+        captured_configs: list[ProxyConfig] = []
+
+        def fake_create_app(config: ProxyConfig) -> MagicMock:
+            captured_configs.append(config)
+            return MagicMock()
+
+        with (
+            _patch("agentguard.cli.create_proxy_app", side_effect=fake_create_app),
+            _patch("uvicorn.run"),
+        ):
+            _cmd_proxy(args)
+
+        assert len(captured_configs) == 1
+        assert captured_configs[0].delta_scanning is True
+
+    def test_cmd_proxy_without_flag_passes_false(self) -> None:
+        """Without --delta-scanning, ProxyConfig.delta_scanning=False."""
+        from unittest.mock import patch as _patch
+
+        from agentguard.cli import _build_parser, _cmd_proxy
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "proxy",
+                "https://api.openai.com",
+                "--preset",
+                "permissive",
+            ]
+        )
+
+        captured_configs: list[ProxyConfig] = []
+
+        def fake_create_app(config: ProxyConfig) -> MagicMock:
+            captured_configs.append(config)
+            return MagicMock()
+
+        with (
+            _patch("agentguard.cli.create_proxy_app", side_effect=fake_create_app),
+            _patch("uvicorn.run"),
+        ):
+            _cmd_proxy(args)
+
+        assert len(captured_configs) == 1
+        assert captured_configs[0].delta_scanning is False
