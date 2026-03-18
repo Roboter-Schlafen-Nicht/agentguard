@@ -71,6 +71,77 @@ class GuardMiddleware:
         # Delta scanning: track how many messages have been scanned
         # per conversation, keyed by conversation fingerprint.
         self._seen_messages: dict[str, int] = {}
+        # Context compaction engine (optional)
+        self.compaction_engine = self._build_compaction_engine()
+
+    def _build_compaction_engine(self) -> Any:
+        """Build a CompactionEngine if compaction is configured and enabled.
+
+        Returns:
+            A CompactionEngine instance, or None if compaction is
+            not configured or is disabled.
+        """
+        if self.config.compaction is not None and self.config.compaction.enabled:
+            from agentguard.proxy.compaction.engine import CompactionEngine
+
+            return CompactionEngine(self.config.compaction)
+        return None
+
+    async def _compact_request_body(
+        self,
+        body: bytes,
+    ) -> tuple[bytes, dict[str, Any]]:
+        """Compact the request body if compaction is enabled.
+
+        Parses the JSON body, extracts the messages array, runs
+        compaction, and returns the re-serialized body with metrics.
+
+        Args:
+            body: The raw request body bytes.
+
+        Returns:
+            Tuple of (possibly-compacted body bytes, metrics dict).
+            If compaction is disabled or the body has no messages,
+            the original body is returned unchanged.
+        """
+        disabled_metrics: dict[str, Any] = {
+            "phase_used": "disabled",
+            "tokens_before": 0,
+            "tokens_after": 0,
+        }
+
+        if self.compaction_engine is None:
+            return body, disabled_metrics
+
+        try:
+            parsed = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return body, disabled_metrics
+
+        if not isinstance(parsed, dict):
+            return body, disabled_metrics
+
+        messages = parsed.get("messages")
+        if not isinstance(messages, list):
+            return body, disabled_metrics
+
+        result = await self.compaction_engine.compact(messages)
+
+        metrics: dict[str, Any] = {
+            "phase_used": result.phase_used,
+            "tokens_before": result.tokens_before,
+            "tokens_after": result.tokens_after,
+            "messages_before": result.messages_before,
+            "messages_after": result.messages_after,
+        }
+
+        if result.phase_used in ("disabled", "none"):
+            return body, metrics
+
+        # Replace messages in the parsed body and re-serialize
+        parsed["messages"] = result.messages
+        compacted_body = json.dumps(parsed).encode("utf-8")
+        return compacted_body, metrics
 
     def _load_auth_token(self) -> str | None:
         """Load an auth token from the configured auth file.
@@ -215,6 +286,11 @@ class GuardMiddleware:
         body = await request.body()
         path = request.url.path
 
+        # Context compaction: compress the conversation before
+        # scanning and forwarding, if enabled.
+        compaction_metrics: dict[str, Any] = {}
+        body, compaction_metrics = await self._compact_request_body(body)
+
         # Check allowed endpoints
         if self.config.allowed_endpoints and not any(
             path.startswith(ep) for ep in self.config.allowed_endpoints
@@ -337,17 +413,28 @@ class GuardMiddleware:
             )
 
         # Record allowed request
+        audit_metadata: dict[str, str] = {
+            "upstream_status": str(upstream_response.status_code),
+            "model": params.get("model", ""),
+            "message_count": str(message_count),
+            "token_estimate": str(token_est),
+        }
+        if compaction_metrics:
+            audit_metadata["compaction_phase"] = str(
+                compaction_metrics.get("phase_used", "")
+            )
+            audit_metadata["compaction_tokens_before"] = str(
+                compaction_metrics.get("tokens_before", 0)
+            )
+            audit_metadata["compaction_tokens_after"] = str(
+                compaction_metrics.get("tokens_after", 0)
+            )
         self.audit_log.record(
             action="llm_request",
             actor=self.config.actor,
             target=path,
             result="allowed",
-            metadata={
-                "upstream_status": str(upstream_response.status_code),
-                "model": params.get("model", ""),
-                "message_count": str(message_count),
-                "token_estimate": str(token_est),
-            },
+            metadata=audit_metadata,
         )
         self._save_audit()
 
