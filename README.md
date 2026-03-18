@@ -39,7 +39,8 @@ AgentGuard guards AI agents at **two layers**:
    outbound prompts for secrets/PII before they reach the LLM. Scans
    inbound responses for prompt injection and exfiltration patterns in
    real time, including streaming (SSE). Terminates dangerous streams
-   mid-flight.
+   mid-flight. Compresses bloated conversations via context compaction
+   before forwarding, saving tokens and money on every request.
 
 <p align="center">
   <img src="docs/architecture.svg" alt="AgentGuard architecture diagram" width="800">
@@ -75,7 +76,7 @@ AgentGuard. Denied actions never execute. Everything is logged.
 
 ### MCP Client Enforcement
 
-AgentGuard's MCP server provides 7 action tools and 2 sidecar tools.
+AgentGuard's MCP server provides 8 action tools and 4 sidecar tools.
 Enforcement coverage depends on whether the MCP client has its own
 native tools that bypass the MCP server:
 
@@ -294,6 +295,103 @@ params = provider.extract_request_params(body)
 content = provider.extract_stream_content(sse_data)
 ```
 
+### Context Compaction
+
+Long-running agent sessions produce massive conversation histories —
+100K+ tokens of stale tool outputs, repeated file reads, and verbose
+command results. The proxy compresses these before forwarding to the
+upstream LLM, saving tokens on every request:
+
+**Phase 1 — Rule-based truncation** (deterministic, zero latency):
+- Truncates old tool outputs to first + last N lines
+- Stubs very old tool results entirely (`[compacted: ran bash]`)
+- Deduplicates repeated file reads, keeping only the latest
+
+**Phase 2 — Local model summarization** (when Phase 1 isn't enough):
+- Summarizes old conversation segments via a local Ollama model
+- Keeps recent turns verbatim for context continuity
+- Falls back gracefully if the local model is unavailable
+
+```bash
+agentguard proxy https://api.openai.com \
+  --compaction \
+  --compaction-budget 30000 \
+  --compaction-model rnj-1:8b-16k \
+  --compaction-url http://localhost:11434 \
+  --audit-dir audit/
+```
+
+Compaction metrics (phase used, tokens before/after) are recorded in
+every audit log entry, so you can measure savings over time.
+
+### Delta Scanning
+
+By default, the proxy scans the entire conversation on every request.
+With `--delta-scanning`, it tracks which messages have already been
+scanned and only checks new ones — eliminating redundant work and
+preventing false positives from old conversation content that happens
+to contain patterns that look like secrets:
+
+```bash
+agentguard proxy https://api.openai.com \
+  --delta-scanning \
+  --builtins \
+  --audit-dir audit/
+```
+
+### Policy Sandbox
+
+Test policies before deploying them to production. The sandbox runs
+scenario-driven validation against your policy set, detects feedback
+loops (policies that trigger each other), and gates deployment on
+configurable thresholds:
+
+```bash
+# Run all sandbox scenarios
+agentguard sandbox run --policy-dir policies/ --scenarios scenarios/
+
+# Gate deployment: TPR >= 95%, FPR <= 5%
+agentguard sandbox gate --policy-dir policies/ --scenarios scenarios/
+
+# Generate a validation report
+agentguard sandbox report --policy-dir policies/ --scenarios scenarios/
+```
+
+### Audit Log Rotation and Retention
+
+Audit logs rotate automatically when they exceed size or age
+thresholds. Old rotated files are cleaned up based on file count,
+age, or total size limits:
+
+```bash
+agentguard proxy https://api.openai.com \
+  --audit-dir audit/ \
+  --max-log-bytes 10485760 \
+  --max-log-age 86400 \
+  --retain-max-files 10 \
+  --retain-max-age 604800
+```
+
+```python
+from agentguard.audit.rotation import RotationConfig
+from agentguard.audit.retention import RetentionConfig
+
+rotation = RotationConfig(max_bytes=10_485_760, max_age_seconds=86400)
+retention = RetentionConfig(max_files=10, max_age_seconds=604800)
+```
+
+### Web Fetch Tool
+
+The MCP server includes `web_fetch_js` — a headless browser-backed
+web fetcher that renders JavaScript before returning content. Returns
+clean markdown, HTML, or plain text suitable for LLM consumption:
+
+```python
+# Available as an MCP tool: agentguard_web_fetch_js
+# Supports: markdown, html, text output formats
+# Configurable timeout and robots.txt compliance
+```
+
 ### MCP Sidecar Tools
 
 The MCP server exposes `agentguard_status` (loaded policies and
@@ -314,8 +412,9 @@ MCP server provides:
 | `file_glob` | Pattern-based file search (mtime-sorted) |
 | `file_grep` | Regex content search with file filter |
 | `file_list` | Directory listing with ignore patterns |
+| `web_fetch_js` | JS-rendering web fetcher (headless browser) |
 
-All 7 action tools enforce policies and log to the audit trail.
+All 8 action tools enforce policies and log to the audit trail.
 
 ### Protection Level Presets
 
@@ -428,6 +527,9 @@ agentguard report FRAMEWORK FILE            Generate compliance report
 agentguard serve [--builtins|--preset LEVEL] Start MCP server
 agentguard proxy URL [--scan-responses]     Start LLM API proxy
 agentguard scan PATH [--format FMT]         Scan a package for security risks
+agentguard sandbox run [--policy-dir DIR]   Run policy sandbox scenarios
+agentguard sandbox gate [--policy-dir DIR]  Gate deployment on TPR/FPR thresholds
+agentguard sandbox report [--policy-dir DIR] Generate sandbox validation report
 agentguard trust add NAME [--level LEVEL]   Register a server in trust registry
 agentguard trust remove NAME                Remove a server
 agentguard trust list [--level LEVEL]        List registered servers
@@ -459,11 +561,12 @@ Requires Python 3.10+. Tested on 3.10, 3.11, 3.12, and 3.13.
 ```
 src/agentguard/
   policies/         Policy engine: Rule, Guard, YAML loader, 11 built-in policies, presets
-  audit/            Audit logging: hash-chained JSONL, integrity verification
+  audit/            Audit logging: hash-chained JSONL, rotation, retention
   guardrails/       Runtime interceptor: Guardrail, hooks, ActionResult
   compliance/       Report generators: EU AI Act, JSON/text renderers
   mcp/              MCP server: transparent tool proxy with policy enforcement
   proxy/            LLM API proxy: middleware, outbound/inbound scanners
+    compaction/     Context compaction: truncation, summarization, metrics
     providers/      Format adapters: Provider protocol, OpenAI adapter
   scanner/          Package scanner: regex-based source code analysis, 6 risk categories
   trust/            Trust registry: trust levels, hash verification, YAML persistence
@@ -479,7 +582,7 @@ src/agentguard/
 5. **Streaming-aware** — scans SSE responses in real time, terminates on violation
 6. **Extensible** — YAML policies, pluggable providers, pluggable interceptors
 7. **Type-safe** — full mypy strict compliance, py.typed marker
-8. **Tested** — 1182 tests, TDD, CI on Python 3.10–3.13
+8. **Tested** — 1700+ tests, TDD, CI on Python 3.10–3.13
 
 ## Roadmap
 
@@ -498,7 +601,12 @@ src/agentguard/
 - [x] Trust registry for MCP servers (trust levels, hash verification)
 - [x] MCP server package scanner (on-demand source code audit)
 - [ ] Anthropic provider adapter
-- [ ] Audit log rotation, retention, and cross-session aggregation
+- [x] Audit log rotation and retention (size/age thresholds, file count limits)
+- [x] Context compaction (rule-based truncation + local model summarization)
+- [x] Delta scanning (incremental message scanning)
+- [x] Policy sandbox (scenario-driven validation, deployment gating)
+- [x] Web fetch tool (JS-rendering headless browser)
+- [ ] Cross-session audit aggregation
 - [ ] ISO 42001 and NIST AI RMF compliance reports
 - [ ] SOC 2 audit evidence mapping
 - [ ] Real-time denial notifications and dashboard integration
