@@ -14,8 +14,8 @@ from agentguard.proxy.routing.router import Router, RoutingDecision
 
 __all__ = [
     "ModelTier",
+    "Router",
     "RoutingConfig",
     "RoutingDecision",
-    "Router",
     "load_routing_config",
 ]

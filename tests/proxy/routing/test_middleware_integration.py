@@ -58,8 +58,8 @@ class TestMiddlewareRouting:
 
     def test_route_request_rewrites_model(self, _routing_config) -> None:
         """Routing rewrites the model field in the request body."""
-        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
 
         config = ProxyConfig(
             upstream_base_url="https://api.example.com",
@@ -86,8 +86,8 @@ class TestMiddlewareRouting:
 
     def test_route_large_request_to_premium(self, _routing_config) -> None:
         """Large requests are routed to the premium tier."""
-        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
 
         config = ProxyConfig(
             upstream_base_url="https://api.example.com",
@@ -113,8 +113,8 @@ class TestMiddlewareRouting:
 
     def test_route_disabled_preserves_body(self) -> None:
         """Disabled routing preserves the original body."""
-        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.routing.config import RoutingConfig
 
         config = ProxyConfig(
@@ -138,8 +138,8 @@ class TestMiddlewareRouting:
 
     def test_route_non_json_body_passthrough(self, _routing_config) -> None:
         """Non-JSON body is passed through unchanged."""
-        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
 
         config = ProxyConfig(
             upstream_base_url="https://api.example.com",
@@ -155,8 +155,8 @@ class TestMiddlewareRouting:
 
     def test_routing_audit_metadata(self, _routing_config) -> None:
         """Routing decision is included in audit metadata."""
-        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
 
         config = ProxyConfig(
             upstream_base_url="https://api.example.com",
@@ -180,8 +180,8 @@ class TestMiddlewareRouting:
 
     def test_route_with_pattern_tier(self) -> None:
         """Pattern-based tier matches content keywords."""
-        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.routing.config import ModelTier, RoutingConfig
 
         routing = RoutingConfig(
