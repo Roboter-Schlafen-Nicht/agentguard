@@ -19,9 +19,10 @@ class CompactionConfig:
             when older than this many turns from the end.
         keep_lines: Lines to keep at start and end of truncated
             tool results.
-        summarizer_url: Ollama API base URL.
+        summarizer_url: Inference server API base URL (Ollama-compatible).
         summarizer_model: Model name for summarization.
         summarizer_timeout: Timeout in seconds for summarization calls.
+        log_dir: Directory for compaction log files.
     """
 
     enabled: bool = False
@@ -33,3 +34,4 @@ class CompactionConfig:
     summarizer_url: str = "http://localhost:11434"
     summarizer_model: str = "rnj-1:8b-16k"
     summarizer_timeout: float = 30.0
+    log_dir: str = "/mnt/nas/rsn/roboter-schlafen-nicht/output/"

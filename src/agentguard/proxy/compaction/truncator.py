@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agentguard.proxy.compaction.config import CompactionConfig
+
+logger = logging.getLogger(__name__)
 
 
 def count_turns(messages: list[dict[str, Any]]) -> int:
@@ -122,6 +125,9 @@ def truncate_messages(
     _find_file_reads(result, file_read_latest)
 
     # Process messages
+    stub_count = 0
+    truncate_count = 0
+    dedup_count = 0
     for i, msg in enumerate(result):
         if i >= recent_start_idx:
             # Recent section — skip unless dedup applies
@@ -129,6 +135,7 @@ def truncate_messages(
                 i, msg, result, file_read_latest
             ):
                 _stub_dedup(msg, result)
+                dedup_count += 1
             continue
 
         if msg.get("role") != "tool":
@@ -137,6 +144,7 @@ def truncate_messages(
         # Check deduplication first
         if not _is_latest_read(i, msg, result, file_read_latest):
             _stub_dedup(msg, result)
+            dedup_count += 1
             continue
 
         content = msg.get("content", "")
@@ -147,9 +155,21 @@ def truncate_messages(
             # Very old — stub it
             tool_name = _get_tool_name(msg, result)
             msg["content"] = f"[compacted: ran {tool_name}]"
+            stub_count += 1
         else:
             # Old but not ancient — truncate
             _truncate_content(msg, config.keep_lines)
+            truncate_count += 1
+
+    logger.debug(
+        "truncation_stats messages=%d stubs=%d truncated=%d "
+        "deduplicated=%d recent_start=%d",
+        len(result),
+        stub_count,
+        truncate_count,
+        dedup_count,
+        recent_start_idx,
+    )
 
     return result
 

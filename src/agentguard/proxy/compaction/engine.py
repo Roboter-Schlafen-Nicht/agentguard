@@ -7,6 +7,7 @@ summarization (Phase 2) to compress old conversation segments.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,8 @@ from agentguard.proxy.compaction.truncator import (
 
 if TYPE_CHECKING:
     from agentguard.proxy.compaction.config import CompactionConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -32,6 +35,9 @@ class CompactionResult:
         messages_after: Number of messages after compaction.
         phase_used: Which phase was needed ("none", "truncation",
             "summarization", or "disabled").
+        summarizer_success: Whether the inference server returned a
+            summary (True), fell back to extractive (False), or
+            summarization was not attempted (None).
     """
 
     messages: list[dict[str, Any]]
@@ -40,6 +46,7 @@ class CompactionResult:
     messages_before: int
     messages_after: int
     phase_used: str
+    summarizer_success: bool | None = None
 
 
 class CompactionEngine:
@@ -76,6 +83,11 @@ class CompactionEngine:
         messages_before = len(messages)
 
         if not self.config.enabled:
+            logger.debug(
+                "compaction_disabled tokens=%d messages=%d",
+                tokens_before,
+                messages_before,
+            )
             return CompactionResult(
                 messages=messages,
                 tokens_before=tokens_before,
@@ -87,6 +99,11 @@ class CompactionEngine:
 
         # Check if already under budget
         if tokens_before <= self.config.token_budget:
+            logger.debug(
+                "compaction_under_budget tokens=%d budget=%d",
+                tokens_before,
+                self.config.token_budget,
+            )
             return CompactionResult(
                 messages=messages,
                 tokens_before=tokens_before,
@@ -100,6 +117,16 @@ class CompactionEngine:
         truncated = truncate_messages(messages, self.config)
         tokens_after_p1 = estimate_messages_tokens(truncated)
 
+        logger.info(
+            "compaction_phase1 tokens_before=%d tokens_after=%d "
+            "budget=%d messages_before=%d messages_after=%d",
+            tokens_before,
+            tokens_after_p1,
+            self.config.token_budget,
+            messages_before,
+            len(truncated),
+        )
+
         if tokens_after_p1 <= self.config.token_budget:
             return CompactionResult(
                 messages=truncated,
@@ -111,8 +138,18 @@ class CompactionEngine:
             )
 
         # Phase 2: Summarize old messages, keep recent ones
-        compacted = await self._apply_summarization(truncated)
+        compacted, summarizer_success = await self._apply_summarization(truncated)
         tokens_after_p2 = estimate_messages_tokens(compacted)
+
+        logger.info(
+            "compaction_phase2 tokens_before=%d tokens_after_p1=%d "
+            "tokens_after_p2=%d budget=%d summarizer_success=%s",
+            tokens_before,
+            tokens_after_p1,
+            tokens_after_p2,
+            self.config.token_budget,
+            summarizer_success,
+        )
 
         return CompactionResult(
             messages=compacted,
@@ -121,19 +158,24 @@ class CompactionEngine:
             messages_before=messages_before,
             messages_after=len(compacted),
             phase_used="summarization",
+            summarizer_success=summarizer_success,
         )
 
     async def _apply_summarization(
         self,
         messages: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], bool]:
         """Split messages into old+recent, summarize old segment.
 
         Args:
             messages: Already-truncated message array.
 
         Returns:
-            New message array: [system, summary, ...recent_turns].
+            Tuple of (new message array, summarizer_success).
+            summarizer_success is True if the inference server returned
+            a summary, False if fallback was used. The summarizer module
+            handles fallback internally, so we detect it by checking
+            whether the result looks like an extractive fallback.
         """
         # Find turn boundaries
         turn_indices = [i for i, m in enumerate(messages) if m.get("role") == "user"]
@@ -163,12 +205,17 @@ class CompactionEngine:
         # Summarize old messages
         if old_msgs:
             summary_text = await summarize_segment(old_msgs, self.config)
+            # Detect if fallback was used: fallback starts with
+            # "[Previous conversation history:"
+            summarizer_success = not summary_text.startswith(
+                "[Previous conversation history:"
+            )
             summary_msg = {
                 "role": "user",
                 "content": (
                     f"[Context summary of previous conversation]\n{summary_text}"
                 ),
             }
-            return [*system_msgs, summary_msg, *recent_msgs]
+            return [*system_msgs, summary_msg, *recent_msgs], summarizer_success
         else:
-            return [*system_msgs, *recent_msgs]
+            return [*system_msgs, *recent_msgs], True

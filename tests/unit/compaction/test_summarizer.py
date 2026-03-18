@@ -1,9 +1,9 @@
-"""Tests for Phase 2: local model summarization via Ollama.
+"""Tests for Phase 2: local model summarization.
 
 Tests cover:
 - Summarization of message segments
-- Ollama API call format
-- Graceful fallback when Ollama is unavailable
+- Inference server API call format
+- Graceful fallback when inference server is unavailable
 - Summary prompt construction
 - Token budget enforcement
 """
@@ -109,7 +109,7 @@ class TestSummarizeSegment:
         mock_response.raise_for_status = lambda: None
 
         with patch(
-            "agentguard.proxy.compaction.summarizer._call_ollama",
+            "agentguard.proxy.compaction.summarizer._call_inference_server",
             return_value="Summary: discussed topics 0-2.",
         ):
             result = await summarize_segment(messages, config)
@@ -118,8 +118,8 @@ class TestSummarizeSegment:
         assert len(result) > 0
 
     @pytest.mark.asyncio
-    async def test_fallback_on_ollama_failure(self):
-        """When Ollama is unavailable, returns a fallback summary."""
+    async def test_fallback_on_inference_server_failure(self):
+        """When inference server is unavailable, returns a fallback summary."""
         from agentguard.proxy.compaction.summarizer import summarize_segment
 
         config = CompactionConfig(
@@ -130,7 +130,7 @@ class TestSummarizeSegment:
         messages = _make_old_messages(3)
 
         with patch(
-            "agentguard.proxy.compaction.summarizer._call_ollama",
+            "agentguard.proxy.compaction.summarizer._call_inference_server",
             side_effect=Exception("Connection refused"),
         ):
             result = await summarize_segment(messages, config)
@@ -155,18 +155,20 @@ class TestSummarizeSegment:
         assert result == ""
 
 
-class TestCallOllama:
-    """Test the low-level Ollama API call."""
+class TestCallInferenceServer:
+    """Test the low-level inference server API call."""
 
     @pytest.mark.asyncio
     async def test_import(self):
-        """_call_ollama can be imported."""
-        from agentguard.proxy.compaction.summarizer import _call_ollama  # noqa: F401
+        """_call_inference_server can be imported."""
+        from agentguard.proxy.compaction.summarizer import (
+            _call_inference_server,  # noqa: F401
+        )
 
     @pytest.mark.asyncio
     async def test_sends_correct_payload(self):
-        """_call_ollama sends the right request format."""
-        from agentguard.proxy.compaction.summarizer import _call_ollama
+        """_call_inference_server sends the right request format."""
+        from agentguard.proxy.compaction.summarizer import _call_inference_server
 
         captured_kwargs = {}
 
@@ -185,7 +187,7 @@ class TestCallOllama:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            result = await _call_ollama(
+            result = await _call_inference_server(
                 prompt="Summarize this",
                 base_url="http://localhost:11434",
                 model="rnj-1:8b-16k",
@@ -198,8 +200,8 @@ class TestCallOllama:
 
     @pytest.mark.asyncio
     async def test_raises_on_error_status(self):
-        """_call_ollama raises when Ollama returns an error."""
-        from agentguard.proxy.compaction.summarizer import _call_ollama
+        """_call_inference_server raises when server returns an error."""
+        from agentguard.proxy.compaction.summarizer import _call_inference_server
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_resp = AsyncMock()
@@ -215,7 +217,7 @@ class TestCallOllama:
             mock_client_cls.return_value = mock_client
 
             with pytest.raises(Exception, match="Internal Server Error"):
-                await _call_ollama(
+                await _call_inference_server(
                     prompt="Summarize",
                     base_url="http://localhost:11434",
                     model="test",

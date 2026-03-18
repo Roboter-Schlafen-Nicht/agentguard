@@ -308,7 +308,7 @@ upstream LLM, saving tokens on every request:
 - Deduplicates repeated file reads, keeping only the latest
 
 **Phase 2 — Local model summarization** (when Phase 1 isn't enough):
-- Summarizes old conversation segments via a local Ollama model
+- Summarizes old conversation segments via a local inference server
 - Keeps recent turns verbatim for context continuity
 - Falls back gracefully if the local model is unavailable
 

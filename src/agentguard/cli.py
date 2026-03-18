@@ -680,12 +680,20 @@ def _build_parser() -> argparse.ArgumentParser:
     proxy_parser.add_argument(
         "--compaction-model",
         default="rnj-1:8b-16k",
-        help="Ollama model for summarization (default: rnj-1:8b-16k).",
+        help="Model for summarization (default: rnj-1:8b-16k).",
     )
     proxy_parser.add_argument(
         "--compaction-url",
         default="http://localhost:11434",
-        help="Ollama API URL for summarization (default: http://localhost:11434).",
+        help="Inference server URL for summarization (default: http://localhost:11434).",
+    )
+    proxy_parser.add_argument(
+        "--log-dir",
+        default="/mnt/nas/rsn/roboter-schlafen-nicht/output/",
+        help=(
+            "Directory for compaction and proxy log files "
+            "(default: /mnt/nas/rsn/roboter-schlafen-nicht/output/)."
+        ),
     )
     proxy_parser.add_argument(
         "--routing-config",
@@ -1240,6 +1248,7 @@ def _build_compaction_config(
         token_budget=getattr(args, "compaction_budget", 30_000),
         summarizer_model=getattr(args, "compaction_model", "rnj-1:8b-16k"),
         summarizer_url=getattr(args, "compaction_url", "http://localhost:11434"),
+        log_dir=getattr(args, "log_dir", "/mnt/nas/rsn/roboter-schlafen-nicht/output/"),
     )
 
 

@@ -1,15 +1,19 @@
-"""Phase 2: Local model summarization via Ollama.
+"""Phase 2: Local model summarization.
 
-Summarizes old conversation segments using a local LLM (Ollama)
-to reduce token usage while preserving key context.
+Summarizes old conversation segments using a local inference server
+(Ollama-compatible API) to reduce token usage while preserving key context.
 """
 
 from __future__ import annotations
 
+import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agentguard.proxy.compaction.config import CompactionConfig
+
+logger = logging.getLogger(__name__)
 
 
 def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
@@ -68,14 +72,14 @@ async def summarize_segment(
     messages: list[dict[str, Any]],
     config: CompactionConfig,
 ) -> str:
-    """Summarize a segment of conversation messages using Ollama.
+    """Summarize a segment of conversation messages using a local inference server.
 
     Sends the messages to a local LLM for summarization. Falls back
-    to a basic text-based summary if the LLM is unavailable.
+    to a basic text-based summary if the server is unavailable.
 
     Args:
         messages: Messages to summarize.
-        config: Compaction configuration with Ollama settings.
+        config: Compaction configuration with inference server settings.
 
     Returns:
         A summary string. Never raises — returns a fallback on error.
@@ -86,14 +90,31 @@ async def summarize_segment(
     prompt = build_summary_prompt(messages)
 
     try:
-        summary = await _call_ollama(
+        t0 = time.monotonic()
+        summary = await _call_inference_server(
             prompt=prompt,
             base_url=config.summarizer_url,
             model=config.summarizer_model,
             timeout=config.summarizer_timeout,
         )
+        duration_ms = (time.monotonic() - t0) * 1000
+        logger.info(
+            "summarization_success model=%s duration_ms=%.0f "
+            "input_chars=%d output_chars=%d",
+            config.summarizer_model,
+            duration_ms,
+            len(prompt),
+            len(summary),
+        )
         return summary
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "summarization_fallback error_type=%s error=%s model=%s url=%s",
+            type(exc).__name__,
+            str(exc),
+            config.summarizer_model,
+            config.summarizer_url,
+        )
         # Fallback: basic extractive summary
         return _fallback_summary(messages)
 
@@ -101,7 +122,7 @@ async def summarize_segment(
 def _fallback_summary(messages: list[dict[str, Any]]) -> str:
     """Create a basic fallback summary without an LLM.
 
-    Extracts key information from messages when Ollama is unavailable.
+    Extracts key information from messages when the inference server is unavailable.
 
     Args:
         messages: Messages to summarize.
@@ -130,18 +151,18 @@ def _fallback_summary(messages: list[dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-async def _call_ollama(
+async def _call_inference_server(
     *,
     prompt: str,
     base_url: str,
     model: str,
     timeout: float,
 ) -> str:
-    """Call the Ollama API for chat completion.
+    """Call an Ollama-compatible inference server for chat completion.
 
     Args:
         prompt: The prompt to send.
-        base_url: Ollama API base URL (e.g. http://localhost:11434).
+        base_url: Inference server API base URL (e.g. http://localhost:11435).
         model: Model name to use.
         timeout: Request timeout in seconds.
 

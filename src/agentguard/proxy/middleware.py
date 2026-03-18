@@ -243,6 +243,7 @@ class GuardMiddleware:
             "tokens_after": result.tokens_after,
             "messages_before": result.messages_before,
             "messages_after": result.messages_after,
+            "summarizer_success": result.summarizer_success,
         }
 
         if result.phase_used in ("disabled", "none"):
@@ -550,6 +551,11 @@ class GuardMiddleware:
             audit_metadata["compaction_tokens_after"] = str(
                 compaction_metrics.get("tokens_after", 0)
             )
+            summarizer_success = compaction_metrics.get("summarizer_success")
+            if summarizer_success is not None:
+                audit_metadata["compaction_summarizer_success"] = str(
+                    summarizer_success
+                )
         if routing_decision is not None:
             audit_metadata.update(self._routing_audit_metadata(routing_decision))
         self.audit_log.record(
