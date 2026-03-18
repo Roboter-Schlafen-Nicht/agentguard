@@ -13,8 +13,6 @@ Tests cover:
 
 from __future__ import annotations
 
-import pytest
-
 from agentguard.proxy.compaction.config import CompactionConfig
 
 
@@ -133,7 +131,9 @@ class TestTruncateMessages:
 
     def test_import(self):
         """truncate_messages can be imported."""
-        from agentguard.proxy.compaction.truncator import truncate_messages  # noqa: F401
+        from agentguard.proxy.compaction.truncator import (
+            truncate_messages,  # noqa: F401
+        )
 
     def test_empty_messages_returns_empty(self):
         """Empty input returns empty output."""
@@ -167,7 +167,7 @@ class TestTruncateMessages:
         original_last_5 = messages[-(5 * 4) :]
         result_last = result[-(5 * 4) :]
 
-        for orig, comp in zip(original_last_5, result_last):
+        for orig, comp in zip(original_last_5, result_last, strict=False):
             assert orig["role"] == comp["role"]
             assert orig.get("content") == comp.get("content")
 
@@ -230,7 +230,7 @@ class TestTruncateMessages:
         result = truncate_messages(messages, config)
 
         assert len(result) == len(messages)
-        for orig, comp in zip(messages, result):
+        for orig, comp in zip(messages, result, strict=False):
             assert orig.get("content") == comp.get("content")
 
     def test_non_tool_messages_in_old_section_preserved(self):
@@ -247,7 +247,7 @@ class TestTruncateMessages:
         assert len(old_users) > 0
 
     def test_tool_call_messages_preserved(self):
-        """Assistant messages with tool_calls are kept (only the result is truncated)."""
+        """Tool_calls kept; only the result is truncated."""
         from agentguard.proxy.compaction.truncator import truncate_messages
 
         messages = _make_messages(turns=20, tool_content_lines=50)

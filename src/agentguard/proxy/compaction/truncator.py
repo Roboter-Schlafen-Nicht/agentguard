@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import copy
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agentguard.proxy.compaction.config import CompactionConfig
+if TYPE_CHECKING:
+    from agentguard.proxy.compaction.config import CompactionConfig
 
 
 def count_turns(messages: list[dict[str, Any]]) -> int:
@@ -276,4 +277,4 @@ def _truncate_content(msg: dict[str, Any], keep_lines: int) -> None:
     omitted = len(lines) - keep_lines * 2
     separator = f"... [{omitted} lines truncated] ..."
 
-    msg["content"] = "\n".join(head + [separator] + tail)
+    msg["content"] = "\n".join([*head, separator, *tail])

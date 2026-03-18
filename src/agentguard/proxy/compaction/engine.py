@@ -8,14 +8,16 @@ summarization (Phase 2) to compress old conversation segments.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agentguard.proxy.compaction.config import CompactionConfig
 from agentguard.proxy.compaction.summarizer import summarize_segment
 from agentguard.proxy.compaction.truncator import (
     estimate_messages_tokens,
     truncate_messages,
 )
+
+if TYPE_CHECKING:
+    from agentguard.proxy.compaction.config import CompactionConfig
 
 
 @dataclass
@@ -135,7 +137,6 @@ class CompactionEngine:
         """
         # Find turn boundaries
         turn_indices = [i for i, m in enumerate(messages) if m.get("role") == "user"]
-        total_turns = len(turn_indices)
 
         # Split into system + old + recent
         system_msgs = []
@@ -168,6 +169,6 @@ class CompactionEngine:
                     f"[Context summary of previous conversation]\n{summary_text}"
                 ),
             }
-            return system_msgs + [summary_msg] + recent_msgs
+            return [*system_msgs, summary_msg, *recent_msgs]
         else:
-            return system_msgs + recent_msgs
+            return [*system_msgs, *recent_msgs]

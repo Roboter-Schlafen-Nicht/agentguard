@@ -41,7 +41,9 @@ class TestBuildSummaryPrompt:
 
     def test_import(self):
         """build_summary_prompt can be imported."""
-        from agentguard.proxy.compaction.summarizer import build_summary_prompt  # noqa: F401
+        from agentguard.proxy.compaction.summarizer import (
+            build_summary_prompt,  # noqa: F401
+        )
 
     def test_prompt_contains_messages(self):
         """The prompt includes the conversation content."""
@@ -83,7 +85,9 @@ class TestSummarizeSegment:
     @pytest.mark.asyncio
     async def test_import(self):
         """summarize_segment can be imported."""
-        from agentguard.proxy.compaction.summarizer import summarize_segment  # noqa: F401
+        from agentguard.proxy.compaction.summarizer import (
+            summarize_segment,  # noqa: F401
+        )
 
     @pytest.mark.asyncio
     async def test_returns_summary_string(self):

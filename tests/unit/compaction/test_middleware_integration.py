@@ -11,7 +11,6 @@ Tests cover:
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -117,13 +116,10 @@ class TestMiddlewareCompaction:
         mw = GuardMiddleware(config)
 
         original_body = _make_request_body(turns=20, lines_per_tool=50)
-        original_parsed = json.loads(original_body)
-        original_msg_count = len(original_parsed["messages"])
 
         # Use the compact_body method directly
         compacted_body, metrics = await mw._compact_request_body(original_body)
-        compacted_parsed = json.loads(compacted_body)
-        compacted_msg_count = len(compacted_parsed["messages"])
+        json.loads(compacted_body)  # ensure valid JSON
 
         # Should have fewer messages or shorter content
         assert metrics["tokens_before"] > metrics["tokens_after"]

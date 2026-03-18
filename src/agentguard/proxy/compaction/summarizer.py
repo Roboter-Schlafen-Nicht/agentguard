@@ -6,9 +6,10 @@ to reduce token usage while preserving key context.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from agentguard.proxy.compaction.config import CompactionConfig
+if TYPE_CHECKING:
+    from agentguard.proxy.compaction.config import CompactionConfig
 
 
 def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
