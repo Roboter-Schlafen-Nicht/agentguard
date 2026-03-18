@@ -224,6 +224,31 @@ class TestMinUniqueCharsFiltering:
         )
         assert not rule.matches(action)
 
+    def test_low_entropy_before_real_key_still_denied(self) -> None:
+        """A real key after a low-entropy placeholder must still be caught.
+
+        Regression test: pattern.search() only returns the first match.
+        If a low-entropy placeholder appears first and a real key second,
+        finditer() must check all matches, not just the first.
+        """
+        rule = self._api_key_rule(min_unique=10)
+        msg = (
+            "low: "
+            + _sk_proj_key("A" * 28)
+            + " high: "
+            + _sk_proj_key(_REALISTIC_SUFFIX)
+        )
+        action = Action(kind="llm_request", params={"messages": msg})
+        assert rule.matches(action)
+
+    def test_multiple_low_entropy_matches_all_skipped(self) -> None:
+        """Multiple low-entropy matches with no real key → allowed."""
+        rule = self._api_key_rule(min_unique=10)
+        msg = "a: " + _sk_proj_key("A" * 28) + " b: " + _sk_proj_key("B" * 28)
+        action = Action(kind="llm_request", params={"messages": msg})
+        # Both have low entropy (8 and 8 unique), so allowed
+        assert not rule.matches(action)
+
 
 class TestMinUniqueCharsLoader:
     """YAML loader parses min_unique_chars from policy files."""

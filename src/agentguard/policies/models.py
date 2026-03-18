@@ -108,6 +108,12 @@ class Rule:
         scan: Optional scan target for LLM proxy rules. When None
             (default), all param values are scanned. When set,
             only the specified param key is scanned.
+        min_unique_chars: Optional minimum unique character count for
+            regex matches. When set, a regex match is only treated as
+            a denial if the matched text contains at least this many
+            distinct characters. This filters out low-entropy
+            placeholders (e.g., all-A fake API keys) while still
+            catching real secrets with high character diversity.
     """
 
     action_kind: str
@@ -144,9 +150,9 @@ class Rule:
         for pattern in self.deny_patterns:
             for value in action.params.values():
                 if isinstance(value, str):
-                    match = pattern.search(value)
-                    if match and self._has_sufficient_entropy(match):
-                        return True
+                    for match in pattern.finditer(value):
+                        if self._has_sufficient_entropy(match):
+                            return True
         return False
 
     def _matches_scan_target(self, action: Action) -> bool:
@@ -157,9 +163,9 @@ class Rule:
             for pattern in self.deny_patterns:
                 for value in action.params.values():
                     if isinstance(value, str):
-                        match = pattern.search(value)
-                        if match and self._has_sufficient_entropy(match):
-                            return True
+                        for match in pattern.finditer(value):
+                            if self._has_sufficient_entropy(match):
+                                return True
             return False
         # Scan only the specified key
         key = self.scan.value
@@ -167,9 +173,9 @@ class Rule:
         if not isinstance(target_value, str):
             return False
         for pattern in self.deny_patterns:
-            match = pattern.search(target_value)
-            if match and self._has_sufficient_entropy(match):
-                return True
+            for match in pattern.finditer(target_value):
+                if self._has_sufficient_entropy(match):
+                    return True
         return False
 
 

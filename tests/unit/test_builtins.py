@@ -709,7 +709,7 @@ class TestNoSecretInPrompt:
         policy = load_builtin("no-secret-in-prompt")
         action = Action(
             kind="llm_request",
-            params={"messages": "Use github_pat_" + "A" * 22},
+            params={"messages": "Use github_pat_" + "AbCdEfGhIjKlMnOpQrStUv"},
         )
         decision = policy.evaluate(action)
         assert decision.denied
