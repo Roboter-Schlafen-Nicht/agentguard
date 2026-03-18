@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
     from agentguard.policies.guard import Guard
+    from agentguard.proxy.compaction.config import CompactionConfig
     from agentguard.sandbox.models import Scenario
     from agentguard.trust.registry import TrustRegistry
 
@@ -661,6 +662,30 @@ def _build_parser() -> argparse.ArgumentParser:
             "not the entire history on every request."
         ),
     )
+    proxy_parser.add_argument(
+        "--compaction",
+        action="store_true",
+        help=(
+            "Enable context compaction: compress large conversations "
+            "before forwarding to the upstream LLM API."
+        ),
+    )
+    proxy_parser.add_argument(
+        "--compaction-budget",
+        type=int,
+        default=30000,
+        help="Token budget for compaction (default: 30000).",
+    )
+    proxy_parser.add_argument(
+        "--compaction-model",
+        default="rnj-1:8b-16k",
+        help="Ollama model for summarization (default: rnj-1:8b-16k).",
+    )
+    proxy_parser.add_argument(
+        "--compaction-url",
+        default="http://localhost:11434",
+        help="Ollama API URL for summarization (default: http://localhost:11434).",
+    )
 
     return parser
 
@@ -1185,6 +1210,28 @@ def _build_retention_config(
     )
 
 
+def _build_compaction_config(
+    args: argparse.Namespace,
+) -> CompactionConfig | None:
+    """Build a CompactionConfig from CLI args, or None.
+
+    Returns a CompactionConfig when ``--compaction`` is set, with
+    budget/model/url from the corresponding flags. Returns None
+    when compaction is not requested.
+    """
+    if not getattr(args, "compaction", False):
+        return None
+
+    from agentguard.proxy.compaction.config import CompactionConfig
+
+    return CompactionConfig(
+        enabled=True,
+        token_budget=getattr(args, "compaction_budget", 30_000),
+        summarizer_model=getattr(args, "compaction_model", "rnj-1:8b-16k"),
+        summarizer_url=getattr(args, "compaction_url", "http://localhost:11434"),
+    )
+
+
 def _cmd_audit_purge(args: argparse.Namespace) -> int:
     """Run retention enforcement on an audit directory."""
     from pathlib import Path
@@ -1542,6 +1589,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
 
         rotation = _build_rotation_config(args)
         retention = _build_retention_config(args)
+        compaction = _build_compaction_config(args)
         config = ProxyConfig(
             upstream_base_url=args.upstream,
             host=args.host,
@@ -1559,6 +1607,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             rotation=rotation,
             retention=retention,
             delta_scanning=args.delta_scanning,
+            compaction=compaction,
         )
         app = create_proxy_app(config)
 

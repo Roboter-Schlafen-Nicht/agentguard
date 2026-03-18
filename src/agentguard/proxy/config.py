@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
+    from agentguard.proxy.compaction.config import CompactionConfig
 
 
 @dataclass
@@ -64,6 +65,10 @@ class ProxyConfig:
             in a conversation have already been scanned and only
             scans new/unseen messages on subsequent requests.
             Default False for backward compatibility.
+        compaction: Optional context compaction config. When set
+            and enabled, large conversations are compressed
+            (truncation + summarization) before forwarding to
+            the upstream LLM API.
     """
 
     upstream_base_url: str
@@ -84,6 +89,7 @@ class ProxyConfig:
     rotation: RotationConfig | None = None
     retention: RetentionConfig | None = None
     delta_scanning: bool = False
+    compaction: CompactionConfig | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration."""
