@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from agentguard.audit.rotation import RotationConfig
     from agentguard.policies.guard import Guard
     from agentguard.proxy.compaction.config import CompactionConfig
+    from agentguard.proxy.routing.config import RoutingConfig
     from agentguard.sandbox.models import Scenario
     from agentguard.trust.registry import TrustRegistry
 
@@ -686,6 +687,16 @@ def _build_parser() -> argparse.ArgumentParser:
         default="http://localhost:11434",
         help="Ollama API URL for summarization (default: http://localhost:11434).",
     )
+    proxy_parser.add_argument(
+        "--routing-config",
+        default=None,
+        help=(
+            "Path to a YAML routing config file for automatic model "
+            "selection based on request complexity. Simple requests "
+            "are routed to fast/cheap models; complex requests go "
+            "to premium models."
+        ),
+    )
 
     return parser
 
@@ -1232,6 +1243,23 @@ def _build_compaction_config(
     )
 
 
+def _build_routing_config(
+    args: argparse.Namespace,
+) -> RoutingConfig | None:
+    """Build a RoutingConfig from CLI args, or None.
+
+    Returns a RoutingConfig when ``--routing-config`` is set.
+    Returns None when model routing is not requested.
+    """
+    routing_path = getattr(args, "routing_config", None)
+    if routing_path is None:
+        return None
+
+    from agentguard.proxy.routing.config import load_routing_config
+
+    return load_routing_config(routing_path)
+
+
 def _cmd_audit_purge(args: argparse.Namespace) -> int:
     """Run retention enforcement on an audit directory."""
     from pathlib import Path
@@ -1590,6 +1618,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
         rotation = _build_rotation_config(args)
         retention = _build_retention_config(args)
         compaction = _build_compaction_config(args)
+        routing = _build_routing_config(args)
         config = ProxyConfig(
             upstream_base_url=args.upstream,
             host=args.host,
@@ -1608,6 +1637,7 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
             retention=retention,
             delta_scanning=args.delta_scanning,
             compaction=compaction,
+            routing=routing,
         )
         app = create_proxy_app(config)
 

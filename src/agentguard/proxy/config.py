@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
     from agentguard.proxy.compaction.config import CompactionConfig
+    from agentguard.proxy.routing.config import RoutingConfig
 
 
 @dataclass
@@ -69,6 +70,11 @@ class ProxyConfig:
             and enabled, large conversations are compressed
             (truncation + summarization) before forwarding to
             the upstream LLM API.
+        routing: Optional model routing config. When set and
+            enabled, requests are automatically routed to different
+            models based on complexity (token count, message count,
+            content patterns). Simple requests go to fast/cheap
+            models; complex requests go to premium models.
     """
 
     upstream_base_url: str
@@ -90,6 +96,7 @@ class ProxyConfig:
     retention: RetentionConfig | None = None
     delta_scanning: bool = False
     compaction: CompactionConfig | None = None
+    routing: RoutingConfig | None = None
 
     def __post_init__(self) -> None:
         """Validate configuration."""
