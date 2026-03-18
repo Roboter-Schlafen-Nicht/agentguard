@@ -1,0 +1,359 @@
+"""Tests for the Router class."""
+
+from __future__ import annotations
+
+import pytest
+
+
+class TestRoutingDecision:
+    """Tests for RoutingDecision dataclass."""
+
+    def test_routing_decision_fields(self) -> None:
+        """RoutingDecision has expected fields."""
+        from agentguard.proxy.routing.router import RoutingDecision
+
+        decision = RoutingDecision(
+            tier_name="fast",
+            model="claude-sonnet-4",
+            upstream_url=None,
+            reason="token_count <= 10000",
+        )
+        assert decision.tier_name == "fast"
+        assert decision.model == "claude-sonnet-4"
+        assert decision.upstream_url is None
+        assert decision.reason == "token_count <= 10000"
+
+    def test_routing_decision_is_frozen(self) -> None:
+        """RoutingDecision is immutable."""
+        from agentguard.proxy.routing.router import RoutingDecision
+
+        decision = RoutingDecision(
+            tier_name="fast",
+            model="claude-sonnet-4",
+            upstream_url=None,
+            reason="test",
+        )
+        with pytest.raises(AttributeError):
+            decision.tier_name = "premium"  # type: ignore[misc]
+
+
+class TestRouterDisabled:
+    """Tests for Router when routing is disabled."""
+
+    def test_disabled_returns_passthrough(self) -> None:
+        """Disabled router returns passthrough decision."""
+        from agentguard.proxy.routing.config import RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(enabled=False)
+        router = Router(config)
+
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="Hello world",
+        )
+
+        assert decision.tier_name == "passthrough"
+        assert decision.model is None
+        assert decision.upstream_url is None
+        assert "disabled" in decision.reason.lower()
+
+
+class TestRouterTokenMatching:
+    """Tests for Router token-based tier matching."""
+
+    def test_matches_tier_by_token_count(self) -> None:
+        """Router matches tier when token count is within max_tokens."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="claude-sonnet-4", max_tokens=10000),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # Under threshold — matches fast tier
+        decision = router.route(token_estimate=5000, message_count=10, content="")
+        assert decision.tier_name == "fast"
+        assert decision.model == "claude-sonnet-4"
+
+    def test_exceeds_token_threshold_falls_through(self) -> None:
+        """Router falls through when token count exceeds max_tokens."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="claude-sonnet-4", max_tokens=10000),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # Over threshold — falls through to premium (no max_tokens constraint)
+        decision = router.route(token_estimate=15000, message_count=10, content="")
+        assert decision.tier_name == "premium"
+        assert decision.model == "claude-opus-4"
+
+
+class TestRouterMessageMatching:
+    """Tests for Router message-count-based tier matching."""
+
+    def test_matches_tier_by_message_count(self) -> None:
+        """Router matches tier when message count is within max_messages."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="simple", model="gpt-4o-mini", max_messages=5),
+                ModelTier(name="standard", model="gpt-4o"),
+            ],
+            default_tier="standard",
+        )
+        router = Router(config)
+
+        decision = router.route(token_estimate=1000, message_count=3, content="")
+        assert decision.tier_name == "simple"
+        assert decision.model == "gpt-4o-mini"
+
+    def test_exceeds_message_threshold_falls_through(self) -> None:
+        """Router falls through when message count exceeds max_messages."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="simple", model="gpt-4o-mini", max_messages=5),
+                ModelTier(name="standard", model="gpt-4o"),
+            ],
+            default_tier="standard",
+        )
+        router = Router(config)
+
+        decision = router.route(token_estimate=1000, message_count=10, content="")
+        assert decision.tier_name == "standard"
+        assert decision.model == "gpt-4o"
+
+
+class TestRouterCombinedConstraints:
+    """Tests for Router with combined token and message constraints."""
+
+    def test_both_constraints_must_match(self) -> None:
+        """Tier with both max_tokens and max_messages requires both to match."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-sonnet-4",
+                    max_tokens=10000,
+                    max_messages=20,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # Both under threshold — matches fast
+        decision = router.route(token_estimate=5000, message_count=10, content="")
+        assert decision.tier_name == "fast"
+
+        # Tokens under, messages over — falls through
+        decision = router.route(token_estimate=5000, message_count=30, content="")
+        assert decision.tier_name == "premium"
+
+        # Tokens over, messages under — falls through
+        decision = router.route(token_estimate=15000, message_count=10, content="")
+        assert decision.tier_name == "premium"
+
+
+class TestRouterPatternMatching:
+    """Tests for Router pattern-based tier matching."""
+
+    def test_matches_tier_by_content_pattern(self) -> None:
+        """Router matches tier when content matches a pattern."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="premium",
+                    model="claude-opus-4",
+                    patterns=["architect", "complex.*design"],
+                ),
+                ModelTier(name="standard", model="claude-sonnet-4"),
+            ],
+            default_tier="standard",
+        )
+        router = Router(config)
+
+        # Content matches "architect" pattern
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="Please help me architect a microservices system",
+        )
+        assert decision.tier_name == "premium"
+        assert decision.model == "claude-opus-4"
+
+    def test_pattern_is_case_insensitive(self) -> None:
+        """Pattern matching is case-insensitive."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="premium", model="claude-opus-4", patterns=["URGENT"]),
+                ModelTier(name="standard", model="claude-sonnet-4"),
+            ],
+            default_tier="standard",
+        )
+        router = Router(config)
+
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="This is urgent please help",
+        )
+        assert decision.tier_name == "premium"
+
+    def test_no_pattern_match_falls_through(self) -> None:
+        """No pattern match falls through to next tier."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="premium", model="claude-opus-4", patterns=["architect"]
+                ),
+                ModelTier(name="standard", model="claude-sonnet-4"),
+            ],
+            default_tier="standard",
+        )
+        router = Router(config)
+
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="Hello, how are you?",
+        )
+        assert decision.tier_name == "standard"
+
+
+class TestRouterDefaultTier:
+    """Tests for Router default tier fallback."""
+
+    def test_falls_back_to_default_tier(self) -> None:
+        """Router falls back to default tier when no tiers match."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="claude-sonnet-4", max_tokens=1000),
+            ],
+            default_tier="fast",
+        )
+        router = Router(config)
+
+        # Exceeds all thresholds — falls back to default
+        decision = router.route(token_estimate=50000, message_count=100, content="")
+        assert decision.tier_name == "fast"
+        assert "default" in decision.reason.lower()
+
+    def test_default_tier_not_found_uses_last_tier(self) -> None:
+        """If default_tier doesn't match any tier name, use last tier."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="claude-sonnet-4", max_tokens=1000),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="nonexistent",
+        )
+        router = Router(config)
+
+        decision = router.route(token_estimate=50000, message_count=100, content="")
+        # Falls back to last tier since default doesn't exist
+        assert decision.tier_name == "premium"
+
+
+class TestRouterUpstreamOverride:
+    """Tests for Router upstream URL override."""
+
+    def test_returns_upstream_url_from_tier(self) -> None:
+        """Router returns upstream_url from matched tier."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="anthropic",
+                    model="claude-opus-4",
+                    upstream_url="https://api.anthropic.com",
+                    patterns=["anthropic"],
+                ),
+                ModelTier(name="default", model="gpt-4o"),
+            ],
+            default_tier="default",
+        )
+        router = Router(config)
+
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="Use anthropic for this",
+        )
+        assert decision.tier_name == "anthropic"
+        assert decision.upstream_url == "https://api.anthropic.com"
+
+
+class TestRouterTierOrder:
+    """Tests for Router tier evaluation order."""
+
+    def test_first_matching_tier_wins(self) -> None:
+        """Router uses first matching tier when multiple could match."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="first", model="model-a", max_tokens=10000),
+                ModelTier(name="second", model="model-b", max_tokens=20000),
+                ModelTier(name="third", model="model-c"),
+            ],
+            default_tier="third",
+        )
+        router = Router(config)
+
+        # 5000 tokens matches both first and second, should use first
+        decision = router.route(token_estimate=5000, message_count=5, content="")
+        assert decision.tier_name == "first"
+        assert decision.model == "model-a"

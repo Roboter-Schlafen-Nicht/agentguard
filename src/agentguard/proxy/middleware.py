@@ -73,6 +73,8 @@ class GuardMiddleware:
         self._seen_messages: dict[str, int] = {}
         # Context compaction engine (optional)
         self.compaction_engine = self._build_compaction_engine()
+        # Model routing (optional)
+        self.router = self._build_router()
 
     def _build_compaction_engine(self) -> Any:
         """Build a CompactionEngine if compaction is configured and enabled.
@@ -86,6 +88,114 @@ class GuardMiddleware:
 
             return CompactionEngine(self.config.compaction)
         return None
+
+    def _build_router(self) -> Any:
+        """Build a Router if routing is configured and enabled.
+
+        Returns:
+            A Router instance, or None if routing is not configured.
+        """
+        if self.config.routing is not None:
+            from agentguard.proxy.routing.router import Router
+
+            return Router(self.config.routing)
+        return None
+
+    def _apply_routing(
+        self,
+        body: bytes,
+    ) -> tuple[bytes, Any]:
+        """Apply model routing to the request body.
+
+        Parses the body, evaluates routing rules, and rewrites the
+        model field if a routing decision is made.
+
+        Args:
+            body: The raw request body bytes.
+
+        Returns:
+            Tuple of (possibly-modified body bytes, RoutingDecision).
+            If routing is disabled or the body is not JSON, returns
+            the original body with a passthrough decision.
+        """
+        from agentguard.proxy.routing.router import RoutingDecision
+
+        passthrough = RoutingDecision(
+            tier_name="passthrough",
+            model=None,
+            upstream_url=None,
+            reason="No router configured",
+        )
+
+        if self.router is None:
+            return body, passthrough
+
+        try:
+            parsed = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return body, passthrough
+
+        if not isinstance(parsed, dict):
+            return body, passthrough
+
+        # Extract routing inputs
+        messages = parsed.get("messages")
+        if not isinstance(messages, list):
+            return body, passthrough
+
+        message_count = len(messages)
+
+        # Concatenate message content for pattern matching and
+        # token estimation
+        content_parts: list[str] = []
+        for msg in messages:
+            if isinstance(msg, dict):
+                content = msg.get("content", "")
+                if isinstance(content, str):
+                    content_parts.append(content)
+                elif isinstance(content, list):
+                    for block in content:
+                        if isinstance(block, dict):
+                            text = block.get("text")
+                            if isinstance(text, str):
+                                content_parts.append(text)
+        all_content = " ".join(content_parts)
+        token_est = estimate_tokens(all_content)
+
+        # Route the request
+        decision = self.router.route(
+            token_estimate=token_est,
+            message_count=message_count,
+            content=all_content,
+        )
+
+        # Rewrite model if the decision specifies one
+        if decision.model is not None:
+            parsed["model"] = decision.model
+            body = json.dumps(parsed).encode("utf-8")
+
+        return body, decision
+
+    @staticmethod
+    def _routing_audit_metadata(decision: Any) -> dict[str, str]:
+        """Build audit metadata from a routing decision.
+
+        Args:
+            decision: A RoutingDecision instance.
+
+        Returns:
+            Dict of string key-value pairs for audit logging.
+        """
+        metadata: dict[str, str] = {
+            "routing_tier": str(decision.tier_name),
+        }
+        if decision.model is not None:
+            metadata["routing_model"] = str(decision.model)
+        if decision.upstream_url is not None:
+            metadata["routing_upstream"] = str(decision.upstream_url)
+        if decision.reason:
+            metadata["routing_reason"] = str(decision.reason)
+        return metadata
 
     async def _compact_request_body(
         self,
@@ -291,6 +401,11 @@ class GuardMiddleware:
         compaction_metrics: dict[str, Any] = {}
         body, compaction_metrics = await self._compact_request_body(body)
 
+        # Model routing: select model/upstream based on complexity
+        routing_decision = None
+        body, routing_decision = self._apply_routing(body)
+        upstream_override = routing_decision.upstream_url
+
         # Check allowed endpoints
         if self.config.allowed_endpoints and not any(
             path.startswith(ep) for ep in self.config.allowed_endpoints
@@ -374,7 +489,13 @@ class GuardMiddleware:
         if conv_fingerprint is not None and current_msg_count > 0:
             self._seen_messages[conv_fingerprint] = current_msg_count
 
-        upstream_url = self.config.upstream_base_url + path
+        # Use routing upstream override if set
+        upstream_base = (
+            upstream_override.rstrip("/")
+            if upstream_override
+            else self.config.upstream_base_url
+        )
+        upstream_url = upstream_base + path
         if request.url.query:
             upstream_url += "?" + request.url.query
 
@@ -429,6 +550,8 @@ class GuardMiddleware:
             audit_metadata["compaction_tokens_after"] = str(
                 compaction_metrics.get("tokens_after", 0)
             )
+        if routing_decision is not None:
+            audit_metadata.update(self._routing_audit_metadata(routing_decision))
         self.audit_log.record(
             action="llm_request",
             actor=self.config.actor,
