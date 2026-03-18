@@ -368,7 +368,7 @@ agentguard proxy https://api.openai.com \
   --audit-dir audit/ \
   --max-log-bytes 10485760 \
   --max-log-age 86400 \
-  --retain-max-files 10 \
+  --max-log-files 10 \
   --retain-max-age 604800
 ```
 
