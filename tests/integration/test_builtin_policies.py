@@ -116,7 +116,7 @@ class TestLlmRequestBuiltins:
         """no-secret-in-prompt denies API keys in prompt content."""
         decision = guard.check(
             "llm_request",
-            messages="my API key is " + "sk-proj-" + "A" * 20,
+            messages="my API key is " + "sk-proj-" + "ABCDEFghijklmnOPQRSTuvwxyz1234",
         )
         assert decision.denied
         assert decision.denied_by == "no-secret-in-prompt"
@@ -215,7 +215,9 @@ class TestPolicyPrecedence:
         # no-secret-in-prompt and no-pii-leak should match
         decision = guard.check(
             "llm_request",
-            messages="email john@example.com and key " + "sk-proj-" + "A" * 24,
+            messages="email john@example.com and key "
+            + "sk-proj-"
+            + "ABCDEFghijklmnOPQRSTuvwx",
         )
         assert decision.denied
         # Only one denied_by is returned (first match in policy order)

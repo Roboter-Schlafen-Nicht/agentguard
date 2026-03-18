@@ -685,7 +685,11 @@ class TestNoSecretInPrompt:
         policy = load_builtin("no-secret-in-prompt")
         action = Action(
             kind="llm_request",
-            params={"messages": "Use this key: sk-proj-" + "A" * 20},
+            params={
+                "messages": "Use this key: "
+                + "sk-proj-"
+                + "ABCDEFghijklmnOPQRSTuvwxyz1234"
+            },
         )
         decision = policy.evaluate(action)
         assert decision.denied
@@ -694,7 +698,9 @@ class TestNoSecretInPrompt:
         policy = load_builtin("no-secret-in-prompt")
         action = Action(
             kind="llm_request",
-            params={"messages": "Token: ghp_" + "a" * 36},
+            params={
+                "messages": "Token: " + "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"
+            },
         )
         decision = policy.evaluate(action)
         assert decision.denied
@@ -703,7 +709,7 @@ class TestNoSecretInPrompt:
         policy = load_builtin("no-secret-in-prompt")
         action = Action(
             kind="llm_request",
-            params={"messages": "Use github_pat_" + "A" * 22},
+            params={"messages": "Use github_pat_" + "AbCdEfGhIjKlMnOpQrStUv"},
         )
         decision = policy.evaluate(action)
         assert decision.denied

@@ -9,7 +9,7 @@ tags: [secrets, llm-request, true-positive]
 actions:
   - kind: llm_request
     params:
-      messages: "Use this API key to call OpenAI: sk-proj-AAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      messages: "Use this API key to call OpenAI: sk-proj-AbCdEfGhIjKlMnOpQrStUvWx"
 
 ---
 name: real-github-pat-in-prompt
@@ -19,7 +19,7 @@ tags: [secrets, llm-request, true-positive]
 actions:
   - kind: llm_request
     params:
-      messages: "Clone the repo using this token: ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      messages: "Clone the repo using this token: ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"
 
 ---
 name: real-aws-key-in-prompt
@@ -92,7 +92,7 @@ actions:
   - kind: file_write
     params:
       path: /tmp/deploy.sh
-      content: "ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      content: "ghp_AbCdEfGhIjKlMnOpQrStUvWxYz1234567890"
 
 ---
 name: long-opaque-bearer-in-prompt
