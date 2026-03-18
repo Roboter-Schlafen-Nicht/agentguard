@@ -258,7 +258,7 @@ def _get_tool_name(
             if isinstance(tc, dict) and tc.get("id") == tool_call_id:
                 fn = tc.get("function", {})
                 if isinstance(fn, dict):
-                    return fn.get("name", "unknown_tool")
+                    return str(fn.get("name", "unknown_tool"))
     return "unknown_tool"
 
 

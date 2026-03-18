@@ -166,4 +166,4 @@ async def _call_ollama(
         data = response.json()
 
     message = data.get("message", {})
-    return message.get("content", "")
+    return str(message.get("content", ""))

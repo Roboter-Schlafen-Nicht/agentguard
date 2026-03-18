@@ -286,6 +286,11 @@ class GuardMiddleware:
         body = await request.body()
         path = request.url.path
 
+        # Context compaction: compress the conversation before
+        # scanning and forwarding, if enabled.
+        compaction_metrics: dict[str, Any] = {}
+        body, compaction_metrics = await self._compact_request_body(body)
+
         # Check allowed endpoints
         if self.config.allowed_endpoints and not any(
             path.startswith(ep) for ep in self.config.allowed_endpoints
@@ -408,17 +413,28 @@ class GuardMiddleware:
             )
 
         # Record allowed request
+        audit_metadata: dict[str, str] = {
+            "upstream_status": str(upstream_response.status_code),
+            "model": params.get("model", ""),
+            "message_count": str(message_count),
+            "token_estimate": str(token_est),
+        }
+        if compaction_metrics:
+            audit_metadata["compaction_phase"] = str(
+                compaction_metrics.get("phase_used", "")
+            )
+            audit_metadata["compaction_tokens_before"] = str(
+                compaction_metrics.get("tokens_before", 0)
+            )
+            audit_metadata["compaction_tokens_after"] = str(
+                compaction_metrics.get("tokens_after", 0)
+            )
         self.audit_log.record(
             action="llm_request",
             actor=self.config.actor,
             target=path,
             result="allowed",
-            metadata={
-                "upstream_status": str(upstream_response.status_code),
-                "model": params.get("model", ""),
-                "message_count": str(message_count),
-                "token_estimate": str(token_est),
-            },
+            metadata=audit_metadata,
         )
         self._save_audit()
 

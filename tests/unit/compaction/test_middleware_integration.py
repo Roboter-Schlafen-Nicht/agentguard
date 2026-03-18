@@ -11,6 +11,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import pytest
 
@@ -260,3 +261,269 @@ class TestCLICompactionFlags:
         args = parser.parse_args(["proxy", "https://api.example.com"])
         config = _build_compaction_config(args)
         assert config is None
+
+
+class TestHandleRequestCompaction:
+    """Test handle_request() compaction wiring."""
+
+    @pytest.mark.asyncio
+    async def test_handle_request_forwards_compacted_body(self):
+        """handle_request should compact the body before forwarding to upstream."""
+        from unittest.mock import patch
+
+        from agentguard.proxy.compaction.config import CompactionConfig
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            compaction=CompactionConfig(
+                enabled=True,
+                token_budget=5000,
+                recent_turns=3,
+                truncate_after_turns=3,
+                stub_after_turns=8,
+                keep_lines=2,
+            ),
+        )
+        mw = GuardMiddleware(config)
+
+        original_body = _make_request_body(turns=20, lines_per_tool=50)
+
+        # Capture what body was forwarded to upstream
+        captured_bodies: list[bytes] = []
+
+        async def fake_forward(method, url, headers, body):
+            """Fake _forward_request that captures the body."""
+            captured_bodies.append(body)
+
+            class FakeResponse:
+                status_code = 200
+                content = b'{"choices": []}'
+                headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+            return FakeResponse()
+
+        with (
+            patch.object(mw, "_forward_request", side_effect=fake_forward),
+            patch.object(mw, "_is_streaming_request", return_value=False),
+        ):
+            from starlette.requests import Request
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/chat/completions",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            }
+
+            async def receive():
+                return {"type": "http.request", "body": original_body}
+
+            req = Request(scope, receive)
+            response = await mw.handle_request(req)
+
+        assert response.status_code == 200
+        assert len(captured_bodies) == 1
+
+        # The forwarded body should be smaller (compacted content)
+        assert len(captured_bodies[0]) < len(original_body)
+
+    @pytest.mark.asyncio
+    async def test_handle_request_no_compaction_forwards_original(self):
+        """Without compaction, handle_request forwards the original body."""
+        from unittest.mock import patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+        )
+        mw = GuardMiddleware(config)
+
+        original_body = _make_request_body(turns=5, lines_per_tool=10)
+
+        captured_bodies: list[bytes] = []
+
+        async def fake_forward(method, url, headers, body):
+            captured_bodies.append(body)
+
+            class FakeResponse:
+                status_code = 200
+                content = b'{"choices": []}'
+                headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+            return FakeResponse()
+
+        with (
+            patch.object(mw, "_forward_request", side_effect=fake_forward),
+            patch.object(mw, "_is_streaming_request", return_value=False),
+        ):
+            from starlette.requests import Request
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/chat/completions",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            }
+
+            async def receive():
+                return {"type": "http.request", "body": original_body}
+
+            req = Request(scope, receive)
+            await mw.handle_request(req)
+
+        assert len(captured_bodies) == 1
+        # Without compaction, body should be forwarded unchanged
+        assert captured_bodies[0] == original_body
+
+    @pytest.mark.asyncio
+    async def test_handle_request_compaction_metrics_in_audit(self):
+        """Compaction metrics should be recorded in the audit log."""
+        from unittest.mock import patch
+
+        from agentguard.proxy.compaction.config import CompactionConfig
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            compaction=CompactionConfig(
+                enabled=True,
+                token_budget=5000,
+                recent_turns=3,
+                truncate_after_turns=3,
+                stub_after_turns=8,
+                keep_lines=2,
+            ),
+        )
+        mw = GuardMiddleware(config)
+
+        original_body = _make_request_body(turns=20, lines_per_tool=50)
+
+        async def fake_forward(method, url, headers, body):
+            class FakeResponse:
+                status_code = 200
+                content = b'{"choices": []}'
+                headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+            return FakeResponse()
+
+        with (
+            patch.object(mw, "_forward_request", side_effect=fake_forward),
+            patch.object(mw, "_is_streaming_request", return_value=False),
+        ):
+            from starlette.requests import Request
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/chat/completions",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            }
+
+            async def receive():
+                return {"type": "http.request", "body": original_body}
+
+            req = Request(scope, receive)
+            await mw.handle_request(req)
+
+        # Check that compaction metrics are in the audit log
+        entries = mw.audit_log.entries
+        allowed_entries = [e for e in entries if e.result == "allowed"]
+        assert len(allowed_entries) >= 1
+        last_allowed = allowed_entries[-1]
+        assert last_allowed.metadata is not None
+        assert "compaction_phase" in last_allowed.metadata
+        assert "compaction_tokens_before" in last_allowed.metadata
+        assert "compaction_tokens_after" in last_allowed.metadata
+
+    @pytest.mark.asyncio
+    async def test_handle_request_compaction_streaming(self):
+        """Compaction should also work for streaming requests."""
+        from unittest.mock import patch
+
+        from agentguard.proxy.compaction.config import CompactionConfig
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            compaction=CompactionConfig(
+                enabled=True,
+                token_budget=5000,
+                recent_turns=3,
+                truncate_after_turns=3,
+                stub_after_turns=8,
+                keep_lines=2,
+            ),
+        )
+        mw = GuardMiddleware(config)
+
+        original_body = _make_request_body(turns=20, lines_per_tool=50)
+
+        captured_bodies: list[bytes] = []
+
+        async def fake_forward_streaming(method, url, headers, body):
+            captured_bodies.append(body)
+
+            async def aiter_bytes():
+                yield b"data: {}\n\n"
+                yield b"data: [DONE]\n\n"
+
+            class FakeResponse:
+                status_code = 200
+                headers: ClassVar[dict[str, str]] = {
+                    "content-type": "text/event-stream",
+                }
+
+                def aiter_bytes(self):
+                    return aiter_bytes()
+
+                async def aclose(self):
+                    pass
+
+            class FakeClient:
+                async def aclose(self):
+                    pass
+
+            from agentguard.proxy.middleware import _StreamContext
+
+            return _StreamContext(client=FakeClient(), response=FakeResponse())
+
+        # Mock _is_streaming_request to return True
+        # Mock _forward_streaming to capture the body
+        with (
+            patch.object(
+                mw,
+                "_forward_streaming",
+                side_effect=fake_forward_streaming,
+            ),
+            patch.object(mw, "_is_streaming_request", return_value=True),
+        ):
+            from starlette.requests import Request
+
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/chat/completions",
+                "query_string": b"",
+                "headers": [(b"content-type", b"application/json")],
+            }
+
+            async def receive():
+                return {"type": "http.request", "body": original_body}
+
+            req = Request(scope, receive)
+            response = await mw.handle_request(req)
+
+        assert response.status_code == 200
+        assert len(captured_bodies) == 1
+
+        # The forwarded body should be smaller (compacted content)
+        assert len(captured_bodies[0]) < len(original_body)
