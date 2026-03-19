@@ -674,8 +674,8 @@ def _build_parser() -> argparse.ArgumentParser:
     proxy_parser.add_argument(
         "--compaction-budget",
         type=int,
-        default=30000,
-        help="Token budget for compaction (default: 30000).",
+        default=60000,
+        help="Token budget for compaction (default: 60000).",
     )
     proxy_parser.add_argument(
         "--compaction-model",
@@ -1242,7 +1242,7 @@ def _build_compaction_config(
 
     return CompactionConfig(
         enabled=True,
-        token_budget=getattr(args, "compaction_budget", 30_000),
+        token_budget=getattr(args, "compaction_budget", 60_000),
         summarizer_model=getattr(args, "compaction_model", "qwen2.5-coder:3b"),
         summarizer_url=getattr(args, "compaction_url", "http://localhost:11434"),
         log_dir=getattr(args, "compaction_log_dir", ""),
