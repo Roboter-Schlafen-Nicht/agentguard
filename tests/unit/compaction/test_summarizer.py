@@ -78,6 +78,48 @@ class TestBuildSummaryPrompt:
         assert "user" in prompt.lower() or "User" in prompt
         assert "assistant" in prompt.lower() or "Assistant" in prompt
 
+    def test_prompt_instructs_no_verbatim_code(self):
+        """The prompt tells the model not to reproduce code verbatim."""
+        from agentguard.proxy.compaction.summarizer import build_summary_prompt
+
+        messages = _make_old_messages(3)
+        prompt = build_summary_prompt(messages)
+
+        assert "do not reproduce code verbatim" in prompt.lower()
+
+    def test_prompt_includes_max_words_constraint(self):
+        """When max_words is provided, the prompt includes a hard word limit."""
+        from agentguard.proxy.compaction.summarizer import build_summary_prompt
+
+        messages = _make_old_messages(5)
+        prompt = build_summary_prompt(messages, max_words=500)
+
+        assert "500" in prompt
+        assert "word" in prompt.lower()
+
+    def test_prompt_without_max_words_has_no_word_limit(self):
+        """Without max_words, the prompt does not mention a specific number."""
+        from agentguard.proxy.compaction.summarizer import build_summary_prompt
+
+        messages = _make_old_messages(5)
+        prompt_no_limit = build_summary_prompt(messages)
+
+        # The word "word" may appear in instructions, but no numeric limit
+        import re
+
+        # Should not contain patterns like "500 words" or "under 300 words"
+        assert not re.search(r"\d+ words", prompt_no_limit)
+
+    def test_prompt_max_words_zero_treated_as_no_limit(self):
+        """max_words=0 is treated as no limit (same as None)."""
+        from agentguard.proxy.compaction.summarizer import build_summary_prompt
+
+        messages = _make_old_messages(3)
+        prompt_no_limit = build_summary_prompt(messages)
+        prompt_zero = build_summary_prompt(messages, max_words=0)
+
+        assert prompt_no_limit == prompt_zero
+
 
 class TestSummarizeSegment:
     """Test the async summarize_segment function."""
@@ -162,6 +204,30 @@ class TestSummarizeSegment:
         summary, used_fallback = result
         assert summary == ""
         assert used_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_passes_max_words_to_prompt(self):
+        """summarize_segment passes max_words through to build_summary_prompt."""
+        from agentguard.proxy.compaction.summarizer import summarize_segment
+
+        config = CompactionConfig(enabled=True)
+        messages = _make_old_messages(3)
+
+        captured_prompt = {}
+
+        async def fake_server(*, prompt, base_url, model, timeout):
+            captured_prompt["text"] = prompt
+            return "Short summary."
+
+        with patch(
+            "agentguard.proxy.compaction.summarizer._call_inference_server",
+            side_effect=fake_server,
+        ):
+            await summarize_segment(messages, config, max_words=300)
+
+        # The prompt sent to the server should contain the word limit
+        assert "300" in captured_prompt["text"]
+        assert "word" in captured_prompt["text"].lower()
 
 
 class TestCallInferenceServer:

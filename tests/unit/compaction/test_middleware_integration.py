@@ -225,7 +225,7 @@ class TestCLICompactionFlags:
         args = parser.parse_args(["proxy", "https://api.example.com"])
         assert args.compaction is False
         assert args.compaction_budget == 30000
-        assert args.compaction_model == "rnj-1:8b-16k"
+        assert args.compaction_model == "qwen2.5-coder:3b"
         assert args.compaction_url == "http://localhost:11434"
 
     def test_build_compaction_config_from_args(self):

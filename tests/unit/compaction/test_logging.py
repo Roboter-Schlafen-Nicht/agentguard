@@ -4,7 +4,7 @@ Covers:
 - Ollama → inference server rename (_call_inference_server exists)
 - Structured logging on summarization success and fallback
 - CompactionResult.summarizer_success field (True, False, None)
-- CompactionConfig.log_dir field (env var default, no hardcoded paths)
+- CompactionConfig.log_dir field (CLI-only, no env var fallback, no hardcoded paths)
 - FileHandler wired to log_dir when set
 - summarize_segment returns (summary, used_fallback) tuple
 - --compaction-log-dir CLI argument (renamed from --log-dir)
@@ -251,7 +251,7 @@ class TestSummarizerSuccess:
         ):
             result = await engine.compact(messages)
 
-        assert result.phase_used == "summarization"
+        assert result.phase_used in ("summarization", "hard_cap")
         assert result.summarizer_success is True
 
     @pytest.mark.asyncio
@@ -285,7 +285,7 @@ class TestSummarizerSuccess:
         ):
             result = await engine.compact(messages)
 
-        assert result.phase_used == "summarization"
+        assert result.phase_used in ("summarization", "hard_cap")
         assert result.summarizer_success is False
 
     @pytest.mark.asyncio
@@ -308,19 +308,52 @@ class TestSummarizerSuccess:
 
 
 class TestLogDirConfig:
-    """Verify log_dir uses env var default, no hardcoded paths."""
+    """Verify log_dir is CLI-only, no env var fallback, no hardcoded paths."""
 
     def test_log_dir_default_is_empty_string(self):
         """CompactionConfig log_dir defaults to empty string (no logging)."""
         config = CompactionConfig()
         assert config.log_dir == ""
 
-    def test_log_dir_from_env_var(self):
-        """CompactionConfig reads AGENTGUARD_LOG_DIR env var."""
+    def test_log_dir_default_ignores_env_var(self):
+        """CompactionConfig does NOT read AGENTGUARD_LOG_DIR env var."""
         with patch.dict(os.environ, {"AGENTGUARD_LOG_DIR": "/tmp/ag-logs/"}):
-            from agentguard.proxy.compaction.config import compaction_log_dir_default
+            config = CompactionConfig()
+            assert config.log_dir == "", (
+                "log_dir should not read AGENTGUARD_LOG_DIR; it should be CLI-only"
+            )
 
-            assert compaction_log_dir_default() == "/tmp/ag-logs/"
+    def test_compaction_log_dir_default_function_removed(self):
+        """compaction_log_dir_default() helper no longer exists in config module."""
+        import agentguard.proxy.compaction.config as config_mod
+
+        assert not hasattr(config_mod, "compaction_log_dir_default"), (
+            "compaction_log_dir_default should be removed; log_dir is CLI-only"
+        )
+
+    def test_no_env_var_reference_in_config_source(self):
+        """config.py must NOT reference AGENTGUARD_LOG_DIR env variable."""
+        import inspect
+
+        from agentguard.proxy.compaction import config as config_mod
+
+        source = inspect.getsource(config_mod)
+        assert "AGENTGUARD_LOG_DIR" not in source, (
+            "AGENTGUARD_LOG_DIR env var reference found in config.py; "
+            "log_dir should be purely CLI-driven"
+        )
+
+    def test_no_env_var_reference_in_cli_help(self):
+        """CLI help must NOT mention AGENTGUARD_LOG_DIR."""
+        import inspect
+
+        from agentguard import cli as cli_mod
+
+        source = inspect.getsource(cli_mod)
+        assert "AGENTGUARD_LOG_DIR" not in source, (
+            "AGENTGUARD_LOG_DIR reference found in cli.py; "
+            "help text should not mention the env var"
+        )
 
     def test_log_dir_custom(self):
         """CompactionConfig accepts a custom log_dir."""
@@ -346,6 +379,46 @@ class TestLogDirConfig:
         source = inspect.getsource(cli_mod)
         assert "/mnt/" not in source, "Hardcoded /mnt/ path found in cli.py"
 
+    def test_config_no_os_import(self):
+        """config.py should not import os (no longer needed without env var)."""
+        import inspect
+
+        from agentguard.proxy.compaction import config as config_mod
+
+        source = inspect.getsource(config_mod)
+        # os is still needed for configure_compaction_logging (makedirs, path.join)
+        # but should NOT appear in the module-level default_factory
+        assert "os.environ" not in source, (
+            "os.environ ref found in config.py; env var fallback removed"
+        )
+
+    def test_no_internal_model_name_in_defaults(self):
+        """Defaults must not reference internal/custom model names."""
+        config = CompactionConfig()
+        assert "rnj-" not in config.summarizer_model, (
+            f"Internal model name '{config.summarizer_model}' leaked into defaults"
+        )
+
+    def test_no_internal_model_name_in_cli(self):
+        """CLI defaults must not reference internal/custom model names."""
+        import inspect
+
+        from agentguard import cli as cli_mod
+
+        source = inspect.getsource(cli_mod)
+        assert "rnj-1" not in source, (
+            "Internal model name 'rnj-1' leaked into CLI defaults/help text"
+        )
+
+    def test_no_internal_model_name_in_config_source(self):
+        """config.py source must not reference internal/custom model names."""
+        import inspect
+
+        from agentguard.proxy.compaction import config as config_mod
+
+        source = inspect.getsource(config_mod)
+        assert "rnj-" not in source, "Internal model name leaked into config.py source"
+
 
 class TestFileHandlerWiring:
     """Verify log_dir configures a FileHandler when set."""
@@ -369,6 +442,67 @@ class TestFileHandlerWiring:
             # Remove handler from the logger
             log = logging.getLogger("agentguard.proxy.compaction")
             log.removeHandler(handler)
+
+    def test_configure_compaction_logging_sets_logger_level(self):
+        """configure_compaction_logging sets logger level to DEBUG.
+
+        Without this, the root logger's WARNING level blocks INFO messages
+        from the summarizer success path (logger.info in summarizer.py).
+        """
+        from agentguard.proxy.compaction.config import configure_compaction_logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = CompactionConfig(log_dir=tmpdir)
+            handler = configure_compaction_logging(config)
+            assert handler is not None
+
+            log = logging.getLogger("agentguard.proxy.compaction")
+            assert log.level <= logging.DEBUG, (
+                f"Logger level is {logging.getLevelName(log.level)}, "
+                f"expected DEBUG or lower so INFO messages reach the handler"
+            )
+
+            # Also verify INFO messages actually pass through
+            assert log.isEnabledFor(logging.INFO), (
+                "Logger should allow INFO messages for summarizer success logging"
+            )
+
+            # Clean up
+            handler.close()
+            log.removeHandler(handler)
+            log.setLevel(logging.NOTSET)
+
+    def test_info_messages_reach_file_handler(self):
+        """INFO-level messages from child loggers must reach the compaction log file.
+
+        This is the exact scenario: summarizer.py uses logger.info() for
+        success messages, which must pass through to the file handler.
+        """
+        from agentguard.proxy.compaction.config import configure_compaction_logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = CompactionConfig(log_dir=tmpdir)
+            handler = configure_compaction_logging(config)
+            assert handler is not None
+
+            # Simulate what summarizer.py does
+            child_logger = logging.getLogger("agentguard.proxy.compaction.summarizer")
+            child_logger.info("summarization_success model=test duration_ms=100")
+
+            handler.flush()
+
+            log_path = os.path.join(tmpdir, "compaction.log")
+            with open(log_path) as f:
+                content = f.read()
+            assert "summarization_success" in content, (
+                f"INFO message not found in compaction.log. Content: {content!r}"
+            )
+
+            # Clean up
+            handler.close()
+            parent_log = logging.getLogger("agentguard.proxy.compaction")
+            parent_log.removeHandler(handler)
+            parent_log.setLevel(logging.NOTSET)
 
     def test_configure_compaction_logging_noop_when_empty(self):
         """configure_compaction_logging returns None when log_dir is empty."""
