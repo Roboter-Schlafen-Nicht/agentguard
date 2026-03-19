@@ -497,3 +497,43 @@ class TestMiddlewareAuditMetadata:
             _compacted_body, metrics = await mw._compact_request_body(body)
 
         assert "summarizer_success" in metrics
+
+
+class TestCompactionLoggingWiring:
+    """Verify configure_compaction_logging is called from production code paths."""
+
+    def test_cmd_proxy_calls_configure_compaction_logging(self):
+        """_cmd_proxy must call configure_compaction_logging after building config."""
+        import ast
+        import inspect
+
+        from agentguard.cli import _cmd_proxy
+
+        source = inspect.getsource(_cmd_proxy)
+        tree = ast.parse(source)
+
+        # Walk the AST looking for a call to configure_compaction_logging
+        found = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                # Match both `configure_compaction_logging(...)` and
+                # `module.configure_compaction_logging(...)`
+                if (
+                    isinstance(func, ast.Name)
+                    and func.id == "configure_compaction_logging"
+                ):
+                    found = True
+                    break
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr == "configure_compaction_logging"
+                ):
+                    found = True
+                    break
+
+        assert found, (
+            "configure_compaction_logging() is not called in _cmd_proxy(). "
+            "File logging will never activate at runtime even when "
+            "--compaction-log-dir is set."
+        )
