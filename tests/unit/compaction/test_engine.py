@@ -819,16 +819,13 @@ class TestHardCapAtomicRemoval:
                         if tool_call_id in call_ids:
                             found = True
                             break
+                msg_summary = [
+                    (m.get("role"), m.get("tool_call_id", "")) for m in result.messages
+                ]
                 assert found, (
                     f"BROKEN PAIRING: tool result at index {i} "
                     f"(tool_call_id={tool_call_id}) has no matching "
-                    f"assistant tool_call. Messages: "
-                    f"{
-                        [
-                            (m.get('role'), m.get('tool_call_id', ''))
-                            for m in result.messages
-                        ]
-                    }"
+                    f"assistant tool_call. Messages: {msg_summary}"
                 )
 
         # Verify EVERY assistant with tool_calls has all results present
