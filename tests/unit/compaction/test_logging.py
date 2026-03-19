@@ -1,0 +1,499 @@
+"""Tests for structured logging and diagnostics in the compaction module.
+
+Covers:
+- Ollama → inference server rename (_call_inference_server exists)
+- Structured logging on summarization success and fallback
+- CompactionResult.summarizer_success field (True, False, None)
+- CompactionConfig.log_dir field (env var default, no hardcoded paths)
+- FileHandler wired to log_dir when set
+- summarize_segment returns (summary, used_fallback) tuple
+- --compaction-log-dir CLI argument (renamed from --log-dir)
+- Audit metadata includes compaction_summarizer_success
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import tempfile
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from agentguard.proxy.compaction.config import CompactionConfig
+
+
+def _make_messages(count: int = 5) -> list[dict]:
+    """Build conversation messages for testing."""
+    messages = []
+    for i in range(count):
+        messages.append({"role": "user", "content": f"Question {i}"})
+        messages.append({"role": "assistant", "content": f"Answer {i}"})
+    return messages
+
+
+class TestOllamaRename:
+    """Verify _call_ollama has been renamed to _call_inference_server."""
+
+    def test_call_inference_server_exists(self):
+        """_call_inference_server can be imported from summarizer."""
+        from agentguard.proxy.compaction.summarizer import (
+            _call_inference_server,  # noqa: F401
+        )
+
+    def test_call_ollama_does_not_exist(self):
+        """_call_ollama no longer exists in summarizer module."""
+        import agentguard.proxy.compaction.summarizer as mod
+
+        assert not hasattr(mod, "_call_ollama"), (
+            "_call_ollama should be renamed to _call_inference_server"
+        )
+
+
+class TestSummarizerLogging:
+    """Verify structured logging is emitted by the summarizer."""
+
+    @pytest.mark.asyncio
+    async def test_logs_on_successful_summarization(self, caplog):
+        """summarize_segment logs an INFO message on success."""
+        from agentguard.proxy.compaction.summarizer import summarize_segment
+
+        config = CompactionConfig(enabled=True)
+        messages = _make_messages(3)
+
+        with (
+            patch(
+                "agentguard.proxy.compaction.summarizer._call_inference_server",
+                new_callable=AsyncMock,
+                return_value="Summary of conversation.",
+            ),
+            caplog.at_level(
+                logging.INFO, logger="agentguard.proxy.compaction.summarizer"
+            ),
+        ):
+            result, used_fallback = await summarize_segment(messages, config)
+
+        assert result == "Summary of conversation."
+        assert used_fallback is False
+
+        # Should have at least one INFO log about success
+        info_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.INFO
+            and "agentguard.proxy.compaction.summarizer" in r.name
+        ]
+        assert len(info_records) >= 1, (
+            f"Expected INFO log on summarization success, got: {caplog.text}"
+        )
+        # Log should mention success/model
+        log_text = " ".join(r.getMessage() for r in info_records)
+        assert "success" in log_text.lower() or "summar" in log_text.lower()
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_on_fallback(self, caplog):
+        """summarize_segment logs a WARNING when falling back."""
+        from agentguard.proxy.compaction.summarizer import summarize_segment
+
+        config = CompactionConfig(enabled=True)
+        messages = _make_messages(3)
+
+        with (
+            patch(
+                "agentguard.proxy.compaction.summarizer._call_inference_server",
+                new_callable=AsyncMock,
+                side_effect=ConnectionError("Connection refused"),
+            ),
+            caplog.at_level(
+                logging.WARNING, logger="agentguard.proxy.compaction.summarizer"
+            ),
+        ):
+            result, used_fallback = await summarize_segment(messages, config)
+
+        # Should still return a fallback (not raise)
+        assert isinstance(result, str)
+        assert len(result) > 0
+        assert used_fallback is True
+
+        # Should have a WARNING log
+        warn_records = [
+            r
+            for r in caplog.records
+            if r.levelno == logging.WARNING
+            and "agentguard.proxy.compaction.summarizer" in r.name
+        ]
+        assert len(warn_records) >= 1, (
+            f"Expected WARNING log on fallback, got: {caplog.text}"
+        )
+        # Warning should mention the error
+        warn_text = " ".join(r.getMessage() for r in warn_records)
+        assert "connection" in warn_text.lower() or "fallback" in warn_text.lower()
+
+
+class TestSummarizeSegmentReturnType:
+    """Verify summarize_segment returns (summary, used_fallback) tuple."""
+
+    @pytest.mark.asyncio
+    async def test_returns_tuple_on_success(self):
+        """summarize_segment returns (str, False) on LLM success."""
+        from agentguard.proxy.compaction.summarizer import summarize_segment
+
+        config = CompactionConfig(enabled=True)
+        messages = _make_messages(3)
+
+        with patch(
+            "agentguard.proxy.compaction.summarizer._call_inference_server",
+            new_callable=AsyncMock,
+            return_value="A concise summary.",
+        ):
+            result = await summarize_segment(messages, config)
+
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        summary, used_fallback = result
+        assert summary == "A concise summary."
+        assert used_fallback is False
+
+    @pytest.mark.asyncio
+    async def test_returns_tuple_on_fallback(self):
+        """summarize_segment returns (str, True) on fallback."""
+        from agentguard.proxy.compaction.summarizer import summarize_segment
+
+        config = CompactionConfig(enabled=True)
+        messages = _make_messages(3)
+
+        with patch(
+            "agentguard.proxy.compaction.summarizer._call_inference_server",
+            new_callable=AsyncMock,
+            side_effect=TimeoutError("Server timed out"),
+        ):
+            result = await summarize_segment(messages, config)
+
+        assert isinstance(result, tuple)
+        summary, used_fallback = result
+        assert isinstance(summary, str)
+        assert len(summary) > 0
+        assert used_fallback is True
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_empty_messages(self):
+        """summarize_segment returns ('', False) for empty input."""
+        from agentguard.proxy.compaction.summarizer import summarize_segment
+
+        config = CompactionConfig(enabled=True)
+        result = await summarize_segment([], config)
+
+        assert isinstance(result, tuple)
+        summary, used_fallback = result
+        assert summary == ""
+        assert used_fallback is False
+
+
+class TestSummarizerSuccess:
+    """Verify CompactionResult exposes summarizer_success field."""
+
+    def test_compaction_result_has_summarizer_success(self):
+        """CompactionResult has a summarizer_success attribute."""
+        from agentguard.proxy.compaction.engine import CompactionResult
+
+        # Check the field exists in the dataclass
+        result = CompactionResult(
+            messages=[],
+            tokens_before=1000,
+            tokens_after=500,
+            messages_before=10,
+            messages_after=5,
+            phase_used="summarization",
+            summarizer_success=True,
+        )
+        assert result.summarizer_success is True
+
+    def test_summarizer_success_none_when_not_summarized(self):
+        """summarizer_success is None when summarization wasn't used."""
+        from agentguard.proxy.compaction.engine import CompactionResult
+
+        result = CompactionResult(
+            messages=[],
+            tokens_before=1000,
+            tokens_after=1000,
+            messages_before=10,
+            messages_after=10,
+            phase_used="none",
+            summarizer_success=None,
+        )
+        assert result.summarizer_success is None
+
+    @pytest.mark.asyncio
+    async def test_engine_sets_summarizer_success_true_on_llm_success(self):
+        """Engine sets summarizer_success=True when LLM summarization works."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=500,
+            recent_turns=2,
+            truncate_after_turns=2,
+            stub_after_turns=5,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+
+        # Build enough messages to trigger Phase 2
+        messages = [{"role": "system", "content": "You are an assistant."}]
+        for i in range(20):
+            messages.append({"role": "user", "content": f"User message {i} " * 50})
+            messages.append({"role": "assistant", "content": f"Response {i} " * 50})
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            return_value=("Summary of earlier conversation.", False),
+        ):
+            result = await engine.compact(messages)
+
+        assert result.phase_used == "summarization"
+        assert result.summarizer_success is True
+
+    @pytest.mark.asyncio
+    async def test_engine_sets_summarizer_success_false_on_fallback(self):
+        """Engine sets summarizer_success=False when fallback was used."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=500,
+            recent_turns=2,
+            truncate_after_turns=2,
+            stub_after_turns=5,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+
+        # Build enough messages to trigger Phase 2
+        messages = [{"role": "system", "content": "You are an assistant."}]
+        for i in range(20):
+            messages.append({"role": "user", "content": f"User message {i} " * 50})
+            messages.append({"role": "assistant", "content": f"Response {i} " * 50})
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            return_value=(
+                "[Previous conversation history: 40 messages, 20 user, 20 assistant]",
+                True,
+            ),
+        ):
+            result = await engine.compact(messages)
+
+        assert result.phase_used == "summarization"
+        assert result.summarizer_success is False
+
+    @pytest.mark.asyncio
+    async def test_engine_sets_summarizer_success_none_under_budget(self):
+        """Engine sets summarizer_success=None when under budget."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=100_000,
+            recent_turns=50,
+        )
+        engine = CompactionEngine(config)
+        messages = _make_messages(3)
+
+        result = await engine.compact(messages)
+
+        assert result.phase_used == "none"
+        assert result.summarizer_success is None
+
+
+class TestLogDirConfig:
+    """Verify log_dir uses env var default, no hardcoded paths."""
+
+    def test_log_dir_default_is_empty_string(self):
+        """CompactionConfig log_dir defaults to empty string (no logging)."""
+        config = CompactionConfig()
+        assert config.log_dir == ""
+
+    def test_log_dir_from_env_var(self):
+        """CompactionConfig reads AGENTGUARD_LOG_DIR env var."""
+        with patch.dict(os.environ, {"AGENTGUARD_LOG_DIR": "/tmp/ag-logs/"}):
+            from agentguard.proxy.compaction.config import compaction_log_dir_default
+
+            assert compaction_log_dir_default() == "/tmp/ag-logs/"
+
+    def test_log_dir_custom(self):
+        """CompactionConfig accepts a custom log_dir."""
+        config = CompactionConfig(log_dir="/tmp/test-logs/")
+        assert config.log_dir == "/tmp/test-logs/"
+
+    def test_no_hardcoded_nas_path_in_config(self):
+        """CompactionConfig must NOT contain hardcoded NAS/infrastructure paths."""
+        import inspect
+
+        from agentguard.proxy.compaction import config as config_mod
+
+        source = inspect.getsource(config_mod)
+        assert "/mnt/" not in source, "Hardcoded /mnt/ path found in config.py"
+        assert "nas" not in source.lower(), "Hardcoded NAS path found in config.py"
+
+    def test_no_hardcoded_nas_path_in_cli(self):
+        """CLI must NOT contain hardcoded NAS/infrastructure paths."""
+        import inspect
+
+        from agentguard import cli as cli_mod
+
+        source = inspect.getsource(cli_mod)
+        assert "/mnt/" not in source, "Hardcoded /mnt/ path found in cli.py"
+
+
+class TestFileHandlerWiring:
+    """Verify log_dir configures a FileHandler when set."""
+
+    def test_configure_compaction_logging_creates_handler(self):
+        """configure_compaction_logging adds FileHandler when log_dir is set."""
+        from agentguard.proxy.compaction.config import configure_compaction_logging
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = CompactionConfig(log_dir=tmpdir)
+            handler = configure_compaction_logging(config)
+
+            assert handler is not None
+            assert isinstance(handler, logging.FileHandler)
+
+            # Verify the file was created in the right directory
+            assert tmpdir in handler.baseFilename
+
+            # Clean up
+            handler.close()
+            # Remove handler from the logger
+            log = logging.getLogger("agentguard.proxy.compaction")
+            log.removeHandler(handler)
+
+    def test_configure_compaction_logging_noop_when_empty(self):
+        """configure_compaction_logging returns None when log_dir is empty."""
+        from agentguard.proxy.compaction.config import configure_compaction_logging
+
+        config = CompactionConfig(log_dir="")
+        handler = configure_compaction_logging(config)
+        assert handler is None
+
+
+class TestCompactionLogDirCLI:
+    """Verify --compaction-log-dir CLI argument (renamed from --log-dir)."""
+
+    def test_compaction_log_dir_argument_exists(self):
+        """CLI has --compaction-log-dir argument."""
+        from agentguard.cli import _build_parser
+
+        parser = _build_parser()
+        # Parse with proxy subcommand
+        args = parser.parse_args(
+            ["proxy", "https://api.example.com", "--compaction-log-dir", "/tmp/logs/"]
+        )
+        assert args.compaction_log_dir == "/tmp/logs/"
+
+    def test_log_dir_argument_does_not_exist(self):
+        """CLI no longer has --log-dir argument (renamed to --compaction-log-dir)."""
+        from agentguard.cli import _build_parser
+
+        parser = _build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                ["proxy", "https://api.example.com", "--log-dir", "/tmp/logs/"]
+            )
+
+    def test_compaction_log_dir_default_is_empty(self):
+        """--compaction-log-dir defaults to empty string."""
+        from agentguard.cli import _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(["proxy", "https://api.example.com"])
+        assert args.compaction_log_dir == ""
+
+    def test_build_compaction_config_uses_compaction_log_dir(self):
+        """_build_compaction_config reads compaction_log_dir from args."""
+        from agentguard.cli import _build_compaction_config, _build_parser
+
+        parser = _build_parser()
+        args = parser.parse_args(
+            [
+                "proxy",
+                "https://api.example.com",
+                "--compaction",
+                "--compaction-log-dir",
+                "/tmp/my-logs/",
+            ]
+        )
+        config = _build_compaction_config(args)
+        assert config is not None
+        assert config.log_dir == "/tmp/my-logs/"
+
+
+class TestEngineLogging:
+    """Verify structured logging in the compaction engine."""
+
+    @pytest.mark.asyncio
+    async def test_engine_logs_phase_decision(self, caplog):
+        """Engine logs which phase it used."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=100_000,
+            recent_turns=50,
+        )
+        engine = CompactionEngine(config)
+        messages = _make_messages(3)
+
+        with caplog.at_level(
+            logging.DEBUG, logger="agentguard.proxy.compaction.engine"
+        ):
+            await engine.compact(messages)
+
+        # Should have logged something about the phase
+        assert len(caplog.records) >= 1, (
+            f"Expected at least 1 log from engine, got: {caplog.text}"
+        )
+
+
+class TestMiddlewareAuditMetadata:
+    """Verify middleware passes summarizer_success into audit metadata."""
+
+    @pytest.mark.asyncio
+    async def test_compaction_metrics_include_summarizer_success(self):
+        """_compact_request_body returns summarizer_success in metrics."""
+        import json
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            compaction=CompactionConfig(
+                enabled=True,
+                token_budget=500,
+                recent_turns=2,
+                truncate_after_turns=2,
+                stub_after_turns=5,
+                keep_lines=1,
+            ),
+        )
+        mw = GuardMiddleware(config)
+
+        # Build a body with enough messages to trigger Phase 2
+        msgs = [{"role": "system", "content": "You are an assistant."}]
+        for i in range(20):
+            msgs.append({"role": "user", "content": f"User message {i} " * 50})
+            msgs.append({"role": "assistant", "content": f"Response {i} " * 50})
+
+        body = json.dumps({"model": "test", "messages": msgs}).encode()
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            return_value=("Summary.", False),
+        ):
+            _compacted_body, metrics = await mw._compact_request_body(body)
+
+        assert "summarizer_success" in metrics
