@@ -4,16 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
-
-
-def compaction_log_dir_default() -> str:
-    """Return the default log directory for compaction.
-
-    Reads the ``AGENTGUARD_LOG_DIR`` environment variable.
-    Falls back to empty string (no file logging) when unset.
-    """
-    return os.environ.get("AGENTGUARD_LOG_DIR", "")
+from dataclasses import dataclass
 
 
 @dataclass
@@ -34,8 +25,7 @@ class CompactionConfig:
         summarizer_model: Model name for summarization.
         summarizer_timeout: Timeout in seconds for summarization calls.
         log_dir: Directory for compaction log files.  Set via
-            ``--compaction-log-dir`` or the ``AGENTGUARD_LOG_DIR``
-            environment variable.  Empty string disables file logging.
+            ``--compaction-log-dir``.  Empty string disables file logging.
     """
 
     enabled: bool = False
@@ -45,9 +35,9 @@ class CompactionConfig:
     stub_after_turns: int = 15
     keep_lines: int = 5
     summarizer_url: str = "http://localhost:11434"
-    summarizer_model: str = "rnj-1:8b-16k"
+    summarizer_model: str = "qwen2.5-coder:3b"
     summarizer_timeout: float = 30.0
-    log_dir: str = field(default_factory=compaction_log_dir_default)
+    log_dir: str = ""
 
 
 def configure_compaction_logging(
@@ -83,5 +73,9 @@ def configure_compaction_logging(
 
     logger = logging.getLogger("agentguard.proxy.compaction")
     logger.addHandler(handler)
+    # Set the logger level to DEBUG so INFO messages from child loggers
+    # (e.g. summarizer.py success path) pass through to the file handler.
+    # Without this, the root logger's WARNING level blocks them.
+    logger.setLevel(logging.DEBUG)
 
     return handler

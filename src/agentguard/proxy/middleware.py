@@ -19,8 +19,10 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
+    from agentguard.proxy.compaction.engine import CompactionEngine
     from agentguard.proxy.config import ProxyConfig
     from agentguard.proxy.providers import Provider
+    from agentguard.proxy.routing.router import Router
 
 from agentguard.audit.log import AuditLog
 from agentguard.policies.guard import Guard
@@ -76,7 +78,7 @@ class GuardMiddleware:
         # Model routing (optional)
         self.router = self._build_router()
 
-    def _build_compaction_engine(self) -> Any:
+    def _build_compaction_engine(self) -> CompactionEngine | None:
         """Build a CompactionEngine if compaction is configured and enabled.
 
         Returns:
@@ -89,7 +91,7 @@ class GuardMiddleware:
             return CompactionEngine(self.config.compaction)
         return None
 
-    def _build_router(self) -> Any:
+    def _build_router(self) -> Router | None:
         """Build a Router if routing is configured and enabled.
 
         Returns:

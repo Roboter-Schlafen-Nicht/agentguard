@@ -679,8 +679,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     proxy_parser.add_argument(
         "--compaction-model",
-        default="rnj-1:8b-16k",
-        help="Model for summarization (default: rnj-1:8b-16k).",
+        default="qwen2.5-coder:3b",
+        help="Model for summarization (default: qwen2.5-coder:3b).",
     )
     proxy_parser.add_argument(
         "--compaction-url",
@@ -690,10 +690,7 @@ def _build_parser() -> argparse.ArgumentParser:
     proxy_parser.add_argument(
         "--compaction-log-dir",
         default="",
-        help=(
-            "Directory for compaction log files.  Falls back to the "
-            "AGENTGUARD_LOG_DIR environment variable when not set."
-        ),
+        help="Directory for compaction log files.",
     )
     proxy_parser.add_argument(
         "--routing-config",
@@ -1246,7 +1243,7 @@ def _build_compaction_config(
     return CompactionConfig(
         enabled=True,
         token_budget=getattr(args, "compaction_budget", 30_000),
-        summarizer_model=getattr(args, "compaction_model", "rnj-1:8b-16k"),
+        summarizer_model=getattr(args, "compaction_model", "qwen2.5-coder:3b"),
         summarizer_url=getattr(args, "compaction_url", "http://localhost:11434"),
         log_dir=getattr(args, "compaction_log_dir", ""),
     )

@@ -316,8 +316,9 @@ upstream LLM, saving tokens on every request:
 agentguard proxy https://api.openai.com \
   --compaction \
   --compaction-budget 30000 \
-  --compaction-model rnj-1:8b-16k \
+  --compaction-model qwen2.5-coder:3b \
   --compaction-url http://localhost:11434 \
+  --compaction-log-dir /var/log/agentguard \
   --audit-dir audit/
 ```
 
