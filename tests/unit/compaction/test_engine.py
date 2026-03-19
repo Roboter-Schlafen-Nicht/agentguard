@@ -177,7 +177,7 @@ class TestCompactionEngine:
         with patch(
             "agentguard.proxy.compaction.engine.summarize_segment",
             new_callable=AsyncMock,
-            return_value="Summary of earlier conversation.",
+            return_value=("Summary of earlier conversation.", False),
         ) as mock_summarize:
             result = await engine.compact(messages)
 
@@ -226,7 +226,7 @@ class TestCompactionEngine:
         with patch(
             "agentguard.proxy.compaction.engine.summarize_segment",
             new_callable=AsyncMock,
-            return_value="Summary: worked on tasks 0-15.",
+            return_value=("Summary: worked on tasks 0-15.", False),
         ):
             result = await engine.compact(messages)
 

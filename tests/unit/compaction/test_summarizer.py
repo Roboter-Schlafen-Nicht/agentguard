@@ -91,7 +91,7 @@ class TestSummarizeSegment:
 
     @pytest.mark.asyncio
     async def test_returns_summary_string(self):
-        """summarize_segment returns a string summary."""
+        """summarize_segment returns a (str, bool) tuple on success."""
         from agentguard.proxy.compaction.summarizer import summarize_segment
 
         config = CompactionConfig(
@@ -114,8 +114,11 @@ class TestSummarizeSegment:
         ):
             result = await summarize_segment(messages, config)
 
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert isinstance(result, tuple)
+        summary, used_fallback = result
+        assert isinstance(summary, str)
+        assert len(summary) > 0
+        assert used_fallback is False
 
     @pytest.mark.asyncio
     async def test_fallback_on_inference_server_failure(self):
@@ -136,23 +139,29 @@ class TestSummarizeSegment:
             result = await summarize_segment(messages, config)
 
         # Should return a basic fallback, not raise
-        assert isinstance(result, str)
-        assert len(result) > 0
+        assert isinstance(result, tuple)
+        summary, used_fallback = result
+        assert isinstance(summary, str)
+        assert len(summary) > 0
+        assert used_fallback is True
         # Fallback should mention it's a condensed history
         assert (
-            "conversation" in result.lower()
-            or "history" in result.lower()
-            or "message" in result.lower()
+            "conversation" in summary.lower()
+            or "history" in summary.lower()
+            or "message" in summary.lower()
         )
 
     @pytest.mark.asyncio
     async def test_empty_messages_returns_empty(self):
-        """Empty message list returns empty string."""
+        """Empty message list returns empty tuple."""
         from agentguard.proxy.compaction.summarizer import summarize_segment
 
         config = CompactionConfig(enabled=True)
         result = await summarize_segment([], config)
-        assert result == ""
+        assert isinstance(result, tuple)
+        summary, used_fallback = result
+        assert summary == ""
+        assert used_fallback is False
 
 
 class TestCallInferenceServer:

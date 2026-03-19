@@ -173,9 +173,7 @@ class CompactionEngine:
         Returns:
             Tuple of (new message array, summarizer_success).
             summarizer_success is True if the inference server returned
-            a summary, False if fallback was used. The summarizer module
-            handles fallback internally, so we detect it by checking
-            whether the result looks like an extractive fallback.
+            a summary, False if fallback was used.
         """
         # Find turn boundaries
         turn_indices = [i for i, m in enumerate(messages) if m.get("role") == "user"]
@@ -204,12 +202,8 @@ class CompactionEngine:
 
         # Summarize old messages
         if old_msgs:
-            summary_text = await summarize_segment(old_msgs, self.config)
-            # Detect if fallback was used: fallback starts with
-            # "[Previous conversation history:"
-            summarizer_success = not summary_text.startswith(
-                "[Previous conversation history:"
-            )
+            summary_text, used_fallback = await summarize_segment(old_msgs, self.config)
+            summarizer_success = not used_fallback
             summary_msg = {
                 "role": "user",
                 "content": (

@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import os
+from dataclasses import dataclass, field
+
+
+def compaction_log_dir_default() -> str:
+    """Return the default log directory for compaction.
+
+    Reads the ``AGENTGUARD_LOG_DIR`` environment variable.
+    Falls back to empty string (no file logging) when unset.
+    """
+    return os.environ.get("AGENTGUARD_LOG_DIR", "")
 
 
 @dataclass
@@ -22,7 +33,9 @@ class CompactionConfig:
         summarizer_url: Inference server API base URL (Ollama-compatible).
         summarizer_model: Model name for summarization.
         summarizer_timeout: Timeout in seconds for summarization calls.
-        log_dir: Directory for compaction log files.
+        log_dir: Directory for compaction log files.  Set via
+            ``--compaction-log-dir`` or the ``AGENTGUARD_LOG_DIR``
+            environment variable.  Empty string disables file logging.
     """
 
     enabled: bool = False
@@ -34,4 +47,41 @@ class CompactionConfig:
     summarizer_url: str = "http://localhost:11434"
     summarizer_model: str = "rnj-1:8b-16k"
     summarizer_timeout: float = 30.0
-    log_dir: str = "/mnt/nas/rsn/roboter-schlafen-nicht/output/"
+    log_dir: str = field(default_factory=compaction_log_dir_default)
+
+
+def configure_compaction_logging(
+    config: CompactionConfig,
+) -> logging.FileHandler | None:
+    """Configure file logging for the compaction module.
+
+    When ``config.log_dir`` is a non-empty path, creates the
+    directory (if needed) and attaches a :class:`logging.FileHandler`
+    to the ``agentguard.proxy.compaction`` logger hierarchy.
+
+    Args:
+        config: Compaction configuration with ``log_dir``.
+
+    Returns:
+        The FileHandler that was added, or None if file logging
+        is disabled (empty ``log_dir``).
+    """
+    if not config.log_dir:
+        return None
+
+    log_dir = config.log_dir.rstrip("/")
+    os.makedirs(log_dir, exist_ok=True)
+
+    log_path = os.path.join(log_dir, "compaction.log")
+    handler = logging.FileHandler(log_path)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    handler.setFormatter(formatter)
+
+    logger = logging.getLogger("agentguard.proxy.compaction")
+    logger.addHandler(handler)
+
+    return handler

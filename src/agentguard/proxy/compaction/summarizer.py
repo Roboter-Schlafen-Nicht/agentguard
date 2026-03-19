@@ -71,7 +71,7 @@ def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
 async def summarize_segment(
     messages: list[dict[str, Any]],
     config: CompactionConfig,
-) -> str:
+) -> tuple[str, bool]:
     """Summarize a segment of conversation messages using a local inference server.
 
     Sends the messages to a local LLM for summarization. Falls back
@@ -82,10 +82,13 @@ async def summarize_segment(
         config: Compaction configuration with inference server settings.
 
     Returns:
-        A summary string. Never raises — returns a fallback on error.
+        Tuple of ``(summary_text, used_fallback)``.
+        ``used_fallback`` is ``False`` when the inference server
+        returned a summary, ``True`` when the extractive fallback
+        was used.  Never raises.
     """
     if not messages:
-        return ""
+        return "", False
 
     prompt = build_summary_prompt(messages)
 
@@ -106,7 +109,7 @@ async def summarize_segment(
             len(prompt),
             len(summary),
         )
-        return summary
+        return summary, False
     except Exception as exc:
         logger.warning(
             "summarization_fallback error_type=%s error=%s model=%s url=%s",
@@ -116,7 +119,7 @@ async def summarize_segment(
             config.summarizer_url,
         )
         # Fallback: basic extractive summary
-        return _fallback_summary(messages)
+        return _fallback_summary(messages), True
 
 
 def _fallback_summary(messages: list[dict[str, Any]]) -> str:

@@ -688,11 +688,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Inference server URL for summarization (default: http://localhost:11434).",
     )
     proxy_parser.add_argument(
-        "--log-dir",
-        default="/mnt/nas/rsn/roboter-schlafen-nicht/output/",
+        "--compaction-log-dir",
+        default="",
         help=(
-            "Directory for compaction and proxy log files "
-            "(default: /mnt/nas/rsn/roboter-schlafen-nicht/output/)."
+            "Directory for compaction log files.  Falls back to the "
+            "AGENTGUARD_LOG_DIR environment variable when not set."
         ),
     )
     proxy_parser.add_argument(
@@ -1248,7 +1248,7 @@ def _build_compaction_config(
         token_budget=getattr(args, "compaction_budget", 30_000),
         summarizer_model=getattr(args, "compaction_model", "rnj-1:8b-16k"),
         summarizer_url=getattr(args, "compaction_url", "http://localhost:11434"),
-        log_dir=getattr(args, "log_dir", "/mnt/nas/rsn/roboter-schlafen-nicht/output/"),
+        log_dir=getattr(args, "compaction_log_dir", ""),
     )
 
 
