@@ -344,7 +344,7 @@ class TestLogDirConfig:
         )
 
     def test_no_env_var_reference_in_cli_help(self):
-        """CLI help text for --compaction-log-dir must NOT mention AGENTGUARD_LOG_DIR."""
+        """CLI help must NOT mention AGENTGUARD_LOG_DIR."""
         import inspect
 
         from agentguard import cli as cli_mod
@@ -389,7 +389,7 @@ class TestLogDirConfig:
         # os is still needed for configure_compaction_logging (makedirs, path.join)
         # but should NOT appear in the module-level default_factory
         assert "os.environ" not in source, (
-            "os.environ reference found in config.py; env var fallback should be removed"
+            "os.environ ref found in config.py; env var fallback removed"
         )
 
     def test_no_internal_model_name_in_defaults(self):
@@ -492,7 +492,8 @@ class TestFileHandlerWiring:
             handler.flush()
 
             log_path = os.path.join(tmpdir, "compaction.log")
-            content = open(log_path).read()
+            with open(log_path) as f:
+                content = f.read()
             assert "summarization_success" in content, (
                 f"INFO message not found in compaction.log. Content: {content!r}"
             )
