@@ -237,3 +237,34 @@ class TestCompactionEngine:
             "Summary:" in m.get("content", "") for m in result.messages[1:5]
         )
         assert found_summary, "Summary not found in early messages"
+
+    @pytest.mark.asyncio
+    async def test_summarize_called_with_max_words(self):
+        """Engine computes a word budget and passes max_words to summarize_segment."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=500,  # Very low budget to force summarization
+            recent_turns=2,
+            truncate_after_turns=2,
+            stub_after_turns=3,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+        messages = _make_messages(turns=20, lines_per_tool=50)
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            return_value=("Summary of old turns.", False),
+        ) as mock_summarize:
+            await engine.compact(messages)
+
+        mock_summarize.assert_called_once()
+        _, kwargs = mock_summarize.call_args
+        assert "max_words" in kwargs, (
+            f"max_words not passed to summarize_segment. kwargs: {kwargs}"
+        )
+        assert isinstance(kwargs["max_words"], int)
+        assert kwargs["max_words"] > 0

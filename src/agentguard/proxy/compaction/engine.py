@@ -202,7 +202,20 @@ class CompactionEngine:
 
         # Summarize old messages
         if old_msgs:
-            summary_text, used_fallback = await summarize_segment(old_msgs, self.config)
+            # Compute word budget: how many words the summary can use.
+            # recent_msgs + system_msgs are kept verbatim, so the summary
+            # must fit in (budget - recent_tokens - system_tokens).
+            # Convert tokens to words at ~0.75 words/token.
+            recent_tokens = estimate_messages_tokens(recent_msgs)
+            system_tokens = estimate_messages_tokens(system_msgs)
+            available_tokens = max(
+                200, self.config.token_budget - recent_tokens - system_tokens
+            )
+            max_words = int(available_tokens * 0.75)
+
+            summary_text, used_fallback = await summarize_segment(
+                old_msgs, self.config, max_words=max_words
+            )
             summarizer_success = not used_fallback
             summary_msg = {
                 "role": "user",

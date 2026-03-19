@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
+def build_summary_prompt(messages: list[dict[str, Any]], max_words: int = 0) -> str:
     """Build a summarization prompt from conversation messages.
 
     Formats the messages into a readable conversation transcript
@@ -24,6 +24,7 @@ def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
 
     Args:
         messages: OpenAI-format message array to summarize.
+        max_words: Maximum word count for the summary. 0 means no limit.
 
     Returns:
         A prompt string ready to send to the summarizer model.
@@ -32,12 +33,20 @@ def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
         return ""
 
     parts: list[str] = []
+
+    word_limit = ""
+    if max_words and max_words > 0:
+        word_limit = f" Keep the summary under {max_words} words."
+
     parts.append(
         "Summarize the following conversation history into a concise summary. "
         "Preserve: key decisions, file paths mentioned, current task state, "
-        "error messages, and important code snippets. "
+        "error messages, and important context. "
+        "Do not reproduce code verbatim. Describe what code was written, "
+        "which files were changed, and why. "
         "Drop: verbose tool outputs, repeated information, resolved issues. "
-        "Format as a brief narrative with bullet points for key facts.\n\n"
+        "Format as a brief narrative with bullet points for key facts."
+        f"{word_limit}\n\n"
         "--- CONVERSATION ---\n"
     )
 
@@ -71,6 +80,8 @@ def build_summary_prompt(messages: list[dict[str, Any]]) -> str:
 async def summarize_segment(
     messages: list[dict[str, Any]],
     config: CompactionConfig,
+    *,
+    max_words: int = 0,
 ) -> tuple[str, bool]:
     """Summarize a segment of conversation messages using a local inference server.
 
@@ -80,6 +91,7 @@ async def summarize_segment(
     Args:
         messages: Messages to summarize.
         config: Compaction configuration with inference server settings.
+        max_words: Maximum word count for the summary. 0 means no limit.
 
     Returns:
         Tuple of ``(summary_text, used_fallback)``.
@@ -90,7 +102,7 @@ async def summarize_segment(
     if not messages:
         return "", False
 
-    prompt = build_summary_prompt(messages)
+    prompt = build_summary_prompt(messages, max_words=max_words)
 
     try:
         t0 = time.monotonic()
