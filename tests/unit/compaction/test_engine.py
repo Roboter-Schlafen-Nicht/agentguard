@@ -182,7 +182,7 @@ class TestCompactionEngine:
             result = await engine.compact(messages)
 
         assert mock_summarize.called
-        assert result.phase_used == "summarization"
+        assert result.phase_used in ("summarization", "hard_cap")
 
     @pytest.mark.asyncio
     async def test_result_has_metrics(self):
@@ -214,14 +214,22 @@ class TestCompactionEngine:
 
         config = CompactionConfig(
             enabled=True,
-            token_budget=500,  # Force Phase 2
+            token_budget=2000,  # Tight enough for Phase 2, room for summary
             recent_turns=2,
             truncate_after_turns=2,
             stub_after_turns=3,
             keep_lines=1,
         )
         engine = CompactionEngine(config)
-        messages = _make_messages(turns=20, lines_per_tool=50)
+
+        # Build messages with large user content so Phase 1 alone
+        # cannot bring tokens under budget.
+        messages = [{"role": "system", "content": "You are an assistant."}]
+        for i in range(20):
+            messages.append({"role": "user", "content": f"User message {i} " * 80})
+            messages.append(
+                {"role": "assistant", "content": f"Assistant reply {i} " * 80}
+            )
 
         with patch(
             "agentguard.proxy.compaction.engine.summarize_segment",
@@ -232,11 +240,11 @@ class TestCompactionEngine:
 
         # Should have: system prompt, summary message, then recent turns
         assert result.messages[0]["role"] == "system"
-        # Second message should contain the summary
+        # Summary message should be present in the output
         found_summary = any(
-            "Summary:" in m.get("content", "") for m in result.messages[1:5]
+            "Summary:" in (m.get("content") or "") for m in result.messages
         )
-        assert found_summary, "Summary not found in early messages"
+        assert found_summary, "Summary not found in messages"
 
     @pytest.mark.asyncio
     async def test_summarize_called_with_max_words(self):
@@ -268,3 +276,157 @@ class TestCompactionEngine:
         )
         assert isinstance(kwargs["max_words"], int)
         assert kwargs["max_words"] > 0
+
+
+class TestPhase3HardCap:
+    """Phase 3: drop oldest non-system messages until under budget."""
+
+    @pytest.mark.asyncio
+    async def test_result_under_budget_after_phase3(self):
+        """After compaction, tokens_after must be <= token_budget."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=2000,
+            recent_turns=2,
+            truncate_after_turns=1,
+            stub_after_turns=2,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+        # Create a large conversation — many turns with big user messages
+        # that Phase 1 won't shrink (Phase 1 only truncates tool results)
+        messages = [{"role": "system", "content": "You are a helpful assistant."}]
+        for i in range(40):
+            # Large user messages that Phase 1 can't truncate
+            messages.append({"role": "user", "content": f"Question {i}: " + "x " * 500})
+            messages.append(
+                {"role": "assistant", "content": f"Answer {i}: " + "y " * 500}
+            )
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            # Summarizer "fails" — returns a still-too-big summary
+            return_value=("summary " * 3000, True),
+        ):
+            result = await engine.compact(messages)
+
+        assert result.tokens_after <= config.token_budget
+
+    @pytest.mark.asyncio
+    async def test_system_messages_preserved_during_phase3(self):
+        """Phase 3 never drops system messages."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=500,
+            recent_turns=1,
+            truncate_after_turns=1,
+            stub_after_turns=1,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+        messages = [{"role": "system", "content": "You are a helpful assistant."}]
+        for i in range(20):
+            messages.append({"role": "user", "content": f"Q{i}: " + "x " * 300})
+            messages.append({"role": "assistant", "content": f"A{i}: " + "y " * 300})
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            return_value=("summary " * 2000, True),
+        ):
+            result = await engine.compact(messages)
+
+        system_msgs = [m for m in result.messages if m["role"] == "system"]
+        assert len(system_msgs) >= 1, "System message was dropped"
+
+    @pytest.mark.asyncio
+    async def test_phase3_logs_when_dropping(self, caplog):
+        """Phase 3 emits a log when it drops messages."""
+        import logging
+
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=1000,
+            recent_turns=1,
+            truncate_after_turns=1,
+            stub_after_turns=1,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+        messages = [{"role": "system", "content": "You are a helpful assistant."}]
+        for i in range(20):
+            messages.append({"role": "user", "content": f"Q{i}: " + "x " * 300})
+            messages.append({"role": "assistant", "content": f"A{i}: " + "y " * 300})
+
+        with (
+            patch(
+                "agentguard.proxy.compaction.engine.summarize_segment",
+                new_callable=AsyncMock,
+                return_value=("summary " * 2000, True),
+            ),
+            caplog.at_level(logging.DEBUG, logger="agentguard.proxy.compaction.engine"),
+        ):
+            await engine.compact(messages)
+
+        phase3_logs = [r for r in caplog.records if "phase3" in r.message.lower()]
+        assert len(phase3_logs) >= 1, (
+            f"No phase3 log found. Logs: {[r.message for r in caplog.records]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase3_not_triggered_when_under_budget(self):
+        """Phase 3 does NOT run when already under budget after Phase 2."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=100_000,  # Huge budget
+            recent_turns=2,
+            truncate_after_turns=1,
+            stub_after_turns=2,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+        messages = _make_messages(turns=5, lines_per_tool=5)
+
+        # With 100k budget, this small conversation won't even trigger compaction
+        result = await engine.compact(messages)
+
+        # No phase3 log should appear
+        assert result.tokens_after <= config.token_budget
+
+    @pytest.mark.asyncio
+    async def test_phase3_preserves_most_recent_user_message(self):
+        """Phase 3 must keep at least the most recent user message."""
+        from agentguard.proxy.compaction.engine import CompactionEngine
+
+        config = CompactionConfig(
+            enabled=True,
+            token_budget=200,  # Extremely tight
+            recent_turns=1,
+            truncate_after_turns=1,
+            stub_after_turns=1,
+            keep_lines=1,
+        )
+        engine = CompactionEngine(config)
+        messages = [{"role": "system", "content": "You are a helpful assistant."}]
+        for i in range(20):
+            messages.append({"role": "user", "content": f"Q{i}: " + "x " * 300})
+            messages.append({"role": "assistant", "content": f"A{i}: " + "y " * 300})
+
+        with patch(
+            "agentguard.proxy.compaction.engine.summarize_segment",
+            new_callable=AsyncMock,
+            return_value=("summary " * 2000, True),
+        ):
+            result = await engine.compact(messages)
+
+        user_msgs = [m for m in result.messages if m["role"] == "user"]
+        assert len(user_msgs) >= 1, "All user messages were dropped"

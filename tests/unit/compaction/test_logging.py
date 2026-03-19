@@ -251,7 +251,7 @@ class TestSummarizerSuccess:
         ):
             result = await engine.compact(messages)
 
-        assert result.phase_used == "summarization"
+        assert result.phase_used in ("summarization", "hard_cap")
         assert result.summarizer_success is True
 
     @pytest.mark.asyncio
@@ -285,7 +285,7 @@ class TestSummarizerSuccess:
         ):
             result = await engine.compact(messages)
 
-        assert result.phase_used == "summarization"
+        assert result.phase_used in ("summarization", "hard_cap")
         assert result.summarizer_success is False
 
     @pytest.mark.asyncio

@@ -34,7 +34,7 @@ class CompactionResult:
         messages_before: Number of messages before compaction.
         messages_after: Number of messages after compaction.
         phase_used: Which phase was needed ("none", "truncation",
-            "summarization", or "disabled").
+            "summarization", "hard_cap", or "disabled").
         summarizer_success: Whether the inference server returned a
             summary (True), fell back to extractive (False), or
             summarization was not attempted (None).
@@ -151,13 +151,39 @@ class CompactionEngine:
             summarizer_success,
         )
 
+        if tokens_after_p2 <= self.config.token_budget:
+            return CompactionResult(
+                messages=compacted,
+                tokens_before=tokens_before,
+                tokens_after=tokens_after_p2,
+                messages_before=messages_before,
+                messages_after=len(compacted),
+                phase_used="summarization",
+                summarizer_success=summarizer_success,
+            )
+
+        # Phase 3: Hard cap — drop oldest non-system messages until
+        # under budget. Preserves system messages and at least the
+        # most recent user message.
+        hard_capped = self._apply_hard_cap(compacted)
+        tokens_after_p3 = estimate_messages_tokens(hard_capped)
+
+        logger.info(
+            "compaction_phase3 tokens_after_p2=%d tokens_after_p3=%d "
+            "budget=%d messages_dropped=%d",
+            tokens_after_p2,
+            tokens_after_p3,
+            self.config.token_budget,
+            len(compacted) - len(hard_capped),
+        )
+
         return CompactionResult(
-            messages=compacted,
+            messages=hard_capped,
             tokens_before=tokens_before,
-            tokens_after=tokens_after_p2,
+            tokens_after=tokens_after_p3,
             messages_before=messages_before,
-            messages_after=len(compacted),
-            phase_used="summarization",
+            messages_after=len(hard_capped),
+            phase_used="hard_cap",
             summarizer_success=summarizer_success,
         )
 
@@ -226,3 +252,45 @@ class CompactionEngine:
             return [*system_msgs, summary_msg, *recent_msgs], summarizer_success
         else:
             return [*system_msgs, *recent_msgs], True
+
+    def _apply_hard_cap(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Drop oldest non-system messages until under token budget.
+
+        Preserves all system messages and at least the most recent user
+        message, even if the result still exceeds the budget.
+
+        Args:
+            messages: Message array (post Phase 1+2).
+
+        Returns:
+            Message array trimmed to fit the token budget.
+        """
+        budget = self.config.token_budget
+
+        # Separate system messages from the rest
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
+
+        # Find the last user message index (in non_system list)
+        last_user_idx = -1
+        for i in range(len(non_system) - 1, -1, -1):
+            if non_system[i].get("role") == "user":
+                last_user_idx = i
+                break
+
+        # Drop from the front of non_system (oldest first), skipping
+        # the last user message
+        while (
+            estimate_messages_tokens(system_msgs + non_system) > budget
+            and len(non_system) > 1
+        ):
+            # Don't drop the last user message
+            if last_user_idx == 0:
+                break
+            non_system.pop(0)
+            last_user_idx -= 1
+
+        return system_msgs + non_system
