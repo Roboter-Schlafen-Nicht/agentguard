@@ -29,7 +29,7 @@ class CompactionConfig:
     """
 
     enabled: bool = False
-    token_budget: int = 30_000
+    token_budget: int = 60_000
     recent_turns: int = 10
     truncate_after_turns: int = 5
     stub_after_turns: int = 15

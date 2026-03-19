@@ -259,8 +259,16 @@ class CompactionEngine:
     ) -> list[dict[str, Any]]:
         """Drop oldest non-system messages until under token budget.
 
-        Preserves all system messages and at least the most recent user
-        message, even if the result still exceeds the budget.
+        Messages are grouped into atomic units to preserve tool_use /
+        tool_result pairing required by the Anthropic API.  An atomic
+        group is one of:
+
+        - A standalone message (user, or assistant without tool_calls)
+        - A tool group: assistant(tool_calls) + all following tool
+          result messages with matching IDs
+
+        Groups are dropped from the front (oldest first).  System
+        messages and the last 2 user messages are never dropped.
 
         Args:
             messages: Message array (post Phase 1+2).
@@ -274,23 +282,82 @@ class CompactionEngine:
         system_msgs = [m for m in messages if m.get("role") == "system"]
         non_system = [m for m in messages if m.get("role") != "system"]
 
-        # Find the last user message index (in non_system list)
-        last_user_idx = -1
-        for i in range(len(non_system) - 1, -1, -1):
-            if non_system[i].get("role") == "user":
-                last_user_idx = i
+        # Build atomic groups — each group is a list of messages that
+        # must be dropped or kept together.
+        groups: list[list[dict[str, Any]]] = []
+        i = 0
+        while i < len(non_system):
+            msg = non_system[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                # Start of a tool group: assistant + all following tool results
+                group = [msg]
+                tool_call_ids = {tc["id"] for tc in msg["tool_calls"]}
+                j = i + 1
+                while j < len(non_system):
+                    nxt = non_system[j]
+                    if (
+                        nxt.get("role") == "tool"
+                        and nxt.get("tool_call_id") in tool_call_ids
+                    ):
+                        group.append(nxt)
+                        j += 1
+                    else:
+                        break
+                groups.append(group)
+                i = j
+            else:
+                groups.append([msg])
+                i += 1
+
+        # Find the last 2 user messages (protected from dropping).
+        # We track which group indices contain them.
+        protected_groups: set[int] = set()
+        user_count = 0
+        for gi in range(len(groups) - 1, -1, -1):
+            for msg in groups[gi]:
+                if msg.get("role") == "user":
+                    protected_groups.add(gi)
+                    user_count += 1
+                    break
+            if user_count >= 2:
                 break
 
-        # Drop from the front of non_system (oldest first), skipping
-        # the last user message
-        while (
-            estimate_messages_tokens(system_msgs + non_system) > budget
-            and len(non_system) > 1
-        ):
-            # Don't drop the last user message
-            if last_user_idx == 0:
-                break
-            non_system.pop(0)
-            last_user_idx -= 1
+        # Drop groups from the front until under budget.
+        # Build the kept list by deciding which groups to keep.
+        kept_groups: list[list[dict[str, Any]]] = list(groups)
+        drop_from = 0
 
-        return system_msgs + non_system
+        while drop_from < len(kept_groups):
+            # Check if current total is under budget
+            flat = system_msgs + [m for g in kept_groups for m in g]
+            if estimate_messages_tokens(flat) <= budget:
+                break
+
+            # Find the next droppable group from the front
+            found_droppable = False
+            while drop_from < len(kept_groups):
+                gi = drop_from
+
+                # Skip protected groups
+                if gi in protected_groups:
+                    drop_from += 1
+                    continue
+
+                # Must keep at least 1 non-system message
+                remaining_msgs = sum(len(g) for g in kept_groups) - len(kept_groups[gi])
+                if remaining_msgs < 1:
+                    drop_from = len(kept_groups)  # Stop
+                    break
+
+                # Drop this group
+                kept_groups[gi] = []  # Empty the group
+                drop_from = gi + 1
+                found_droppable = True
+                break
+
+            if not found_droppable:
+                break
+
+        # Flatten kept groups back into a message list
+        result = system_msgs + [m for g in kept_groups for m in g]
+        return result
