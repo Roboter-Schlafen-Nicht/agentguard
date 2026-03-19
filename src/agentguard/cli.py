@@ -1627,6 +1627,12 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
         rotation = _build_rotation_config(args)
         retention = _build_retention_config(args)
         compaction = _build_compaction_config(args)
+        if compaction is not None:
+            from agentguard.proxy.compaction.config import (
+                configure_compaction_logging,
+            )
+
+            configure_compaction_logging(compaction)
         routing = _build_routing_config(args)
         config = ProxyConfig(
             upstream_base_url=args.upstream,
