@@ -702,6 +702,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "to premium models."
         ),
     )
+    proxy_parser.add_argument(
+        "--routing-log-dir",
+        default="",
+        help="Directory for routing log files.",
+    )
 
     return parser
 
@@ -1263,7 +1268,9 @@ def _build_routing_config(
 
     from agentguard.proxy.routing.config import load_routing_config
 
-    return load_routing_config(routing_path)
+    config = load_routing_config(routing_path)
+    config.log_dir = getattr(args, "routing_log_dir", "")
+    return config
 
 
 def _cmd_audit_purge(args: argparse.Namespace) -> int:
@@ -1631,6 +1638,12 @@ def _cmd_proxy(args: argparse.Namespace) -> int:
 
             configure_compaction_logging(compaction)
         routing = _build_routing_config(args)
+        if routing is not None:
+            from agentguard.proxy.routing.config import (
+                configure_routing_logging,
+            )
+
+            configure_routing_logging(routing)
         config = ProxyConfig(
             upstream_base_url=args.upstream,
             host=args.host,

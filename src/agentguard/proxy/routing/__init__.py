@@ -8,6 +8,7 @@ to premium models.
 from agentguard.proxy.routing.config import (
     ModelTier,
     RoutingConfig,
+    configure_routing_logging,
     load_routing_config,
 )
 from agentguard.proxy.routing.router import Router, RoutingDecision
@@ -17,5 +18,6 @@ __all__ = [
     "Router",
     "RoutingConfig",
     "RoutingDecision",
+    "configure_routing_logging",
     "load_routing_config",
 ]
