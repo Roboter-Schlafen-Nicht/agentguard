@@ -7,12 +7,15 @@ decision specifying which model and upstream to use.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from agentguard.proxy.routing.config import RoutingConfig
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,11 @@ class Router:
             optional upstream URL override.
         """
         if not self._config.enabled:
+            logger.debug(
+                "routing_disabled tokens=%d messages=%d",
+                token_estimate,
+                message_count,
+            )
             return RoutingDecision(
                 tier_name="passthrough",
                 model=None,
@@ -96,12 +104,21 @@ class Router:
                 tier.name, token_estimate, message_count, content
             )
             if matched:
-                return RoutingDecision(
+                decision = RoutingDecision(
                     tier_name=tier.name,
                     model=tier.model,
                     upstream_url=tier.upstream_url,
                     reason=reason,
                 )
+                logger.info(
+                    "routing_decision tier=%s model=%s reason=%s tokens=%d messages=%d",
+                    tier.name,
+                    tier.model,
+                    reason,
+                    token_estimate,
+                    message_count,
+                )
+                return decision
 
         # No tier matched — fall back to default
         return self._resolve_default(token_estimate, message_count)
@@ -168,6 +185,13 @@ class Router:
         # Find the default tier by name
         for tier in self._config.tiers:
             if tier.name == default_name:
+                logger.info(
+                    "routing_default tier=%s model=%s tokens=%d messages=%d",
+                    tier.name,
+                    tier.model,
+                    token_estimate,
+                    message_count,
+                )
                 return RoutingDecision(
                     tier_name=tier.name,
                     model=tier.model,
@@ -178,6 +202,14 @@ class Router:
         # Default tier name not found — use last tier as fallback
         if self._config.tiers:
             last = self._config.tiers[-1]
+            logger.warning(
+                "routing_default_not_found default_tier=%s "
+                "fallback_tier=%s tokens=%d messages=%d",
+                default_name,
+                last.name,
+                token_estimate,
+                message_count,
+            )
             return RoutingDecision(
                 tier_name=last.name,
                 model=last.model,
@@ -186,6 +218,12 @@ class Router:
             )
 
         # No tiers at all — passthrough
+        logger.warning(
+            "routing_no_tiers default_tier=%s tokens=%d messages=%d",
+            default_name,
+            token_estimate,
+            message_count,
+        )
         return RoutingDecision(
             tier_name="passthrough",
             model=None,

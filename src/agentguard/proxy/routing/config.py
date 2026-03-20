@@ -6,6 +6,8 @@ are routed to different models based on complexity metrics.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -51,11 +53,14 @@ class RoutingConfig:
             order; the first matching tier is used.
         default_tier: Name of the tier to use when no tiers match.
             Should match a tier name in the tiers list.
+        log_dir: Directory for routing log files.  Set via
+            ``--routing-log-dir``.  Empty string disables file logging.
     """
 
     enabled: bool = False
     tiers: list[ModelTier] = field(default_factory=list)
     default_tier: str = "default"
+    log_dir: str = ""
 
 
 def load_routing_config(path: Path | str) -> RoutingConfig:
@@ -165,3 +170,44 @@ def _parse_model_tier(data: dict[str, Any], index: int) -> ModelTier:
         max_messages=data.get("max_messages"),
         patterns=[str(p) for p in patterns],
     )
+
+
+def configure_routing_logging(
+    config: RoutingConfig,
+) -> logging.FileHandler | None:
+    """Configure file logging for the routing module.
+
+    When ``config.log_dir`` is a non-empty path, creates the
+    directory (if needed) and attaches a :class:`logging.FileHandler`
+    to the ``agentguard.proxy.routing`` logger hierarchy.
+
+    Args:
+        config: Routing configuration with ``log_dir``.
+
+    Returns:
+        The FileHandler that was added, or None if file logging
+        is disabled (empty ``log_dir``).
+    """
+    if not config.log_dir:
+        return None
+
+    log_dir = config.log_dir.rstrip("/")
+    os.makedirs(log_dir, exist_ok=True)
+
+    log_path = os.path.join(log_dir, "routing.log")
+    handler = logging.FileHandler(log_path)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+    handler.setFormatter(formatter)
+
+    logger = logging.getLogger("agentguard.proxy.routing")
+    logger.addHandler(handler)
+    # Set the logger level to DEBUG so INFO messages from child loggers
+    # (e.g. router.py decision logging) pass through to the file handler.
+    # Without this, the root logger's WARNING level blocks them.
+    logger.setLevel(logging.DEBUG)
+
+    return handler
