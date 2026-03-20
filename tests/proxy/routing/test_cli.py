@@ -68,3 +68,55 @@ tiers:
         args = argparse.Namespace(routing_config="/nonexistent/routing.yaml")
         with pytest.raises(FileNotFoundError):
             _build_routing_config(args)
+
+
+class TestClassifierUrlCLI:
+    """Tests for --classifier-url CLI flag integration."""
+
+    def test_classifier_url_wired_to_config(self, tmp_path) -> None:
+        """--classifier-url is wired into RoutingConfig.classifier_url."""
+        import argparse
+
+        from agentguard.cli import _build_routing_config
+
+        yaml_content = """\
+enabled: true
+tiers:
+  - name: default
+    model: claude-sonnet-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        args = argparse.Namespace(
+            routing_config=str(config_file),
+            classifier_url="http://localhost:11435",
+        )
+        config = _build_routing_config(args)
+
+        assert config is not None
+        assert config.classifier_url == "http://localhost:11435"
+
+    def test_classifier_url_defaults_to_empty(self, tmp_path) -> None:
+        """Without --classifier-url, classifier_url defaults to empty."""
+        import argparse
+
+        from agentguard.cli import _build_routing_config
+
+        yaml_content = """\
+enabled: true
+tiers:
+  - name: default
+    model: claude-sonnet-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        args = argparse.Namespace(
+            routing_config=str(config_file),
+            classifier_url="",
+        )
+        config = _build_routing_config(args)
+
+        assert config is not None
+        assert config.classifier_url == ""

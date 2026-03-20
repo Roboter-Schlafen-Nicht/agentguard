@@ -707,6 +707,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default="",
         help="Directory for routing log files.",
     )
+    proxy_parser.add_argument(
+        "--classifier-url",
+        default="",
+        help=(
+            "URL of the difficulty classifier endpoint (XPU inference "
+            "server). When set, requests are classified as Simple/"
+            "Medium/Complex before routing. Empty string disables."
+        ),
+    )
 
     return parser
 
@@ -1270,6 +1279,7 @@ def _build_routing_config(
 
     config = load_routing_config(routing_path)
     config.log_dir = getattr(args, "routing_log_dir", "")
+    config.classifier_url = getattr(args, "classifier_url", "")
     return config
 
 

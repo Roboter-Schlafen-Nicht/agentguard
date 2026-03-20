@@ -172,3 +172,86 @@ tiers:
 
         with pytest.raises(ValueError, match="model"):
             load_routing_config(config_file)
+
+
+class TestModelTierDifficulty:
+    """Tests for max_difficulty field on ModelTier."""
+
+    def test_max_difficulty_default_is_none(self) -> None:
+        """max_difficulty defaults to None."""
+        from agentguard.proxy.routing.config import ModelTier
+
+        tier = ModelTier(name="fast", model="claude-sonnet-4")
+        assert tier.max_difficulty is None
+
+    def test_max_difficulty_can_be_set(self) -> None:
+        """max_difficulty can be set to an integer."""
+        from agentguard.proxy.routing.config import ModelTier
+
+        tier = ModelTier(
+            name="fast",
+            model="claude-sonnet-4",
+            max_difficulty=1,
+        )
+        assert tier.max_difficulty == 1
+
+    def test_max_difficulty_loaded_from_yaml(self, tmp_path) -> None:
+        """max_difficulty is loaded from YAML config."""
+        from agentguard.proxy.routing.config import load_routing_config
+
+        yaml_content = """\
+enabled: true
+tiers:
+  - name: fast
+    model: claude-sonnet-4
+    max_difficulty: 1
+  - name: standard
+    model: claude-sonnet-4
+    max_difficulty: 2
+  - name: premium
+    model: claude-opus-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_routing_config(config_file)
+        assert config.tiers[0].max_difficulty == 1
+        assert config.tiers[1].max_difficulty == 2
+        assert config.tiers[2].max_difficulty is None
+
+
+class TestRoutingConfigClassifierUrl:
+    """Tests for classifier_url field on RoutingConfig."""
+
+    def test_classifier_url_default_is_empty(self) -> None:
+        """classifier_url defaults to empty string."""
+        from agentguard.proxy.routing.config import RoutingConfig
+
+        config = RoutingConfig()
+        assert config.classifier_url == ""
+
+    def test_classifier_url_can_be_set(self) -> None:
+        """classifier_url can be set."""
+        from agentguard.proxy.routing.config import RoutingConfig
+
+        config = RoutingConfig(
+            classifier_url="http://localhost:11435",
+        )
+        assert config.classifier_url == "http://localhost:11435"
+
+    def test_classifier_url_loaded_from_yaml(self, tmp_path) -> None:
+        """classifier_url is loaded from YAML config."""
+        from agentguard.proxy.routing.config import load_routing_config
+
+        yaml_content = """\
+enabled: true
+classifier_url: http://localhost:11435
+tiers:
+  - name: default
+    model: claude-sonnet-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_routing_config(config_file)
+        assert config.classifier_url == "http://localhost:11435"

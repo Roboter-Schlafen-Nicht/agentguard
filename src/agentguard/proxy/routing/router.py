@@ -72,6 +72,7 @@ class Router:
         token_estimate: int,
         message_count: int,
         content: str,
+        difficulty: int = 0,
     ) -> RoutingDecision:
         """Route a request to a model tier.
 
@@ -80,6 +81,9 @@ class Router:
             message_count: Number of messages in the conversation.
             content: Concatenated text content of the request
                 (used for pattern matching).
+            difficulty: Difficulty level from the classifier (1-3),
+                or 0 if unknown/unavailable.  0 skips difficulty
+                constraints.
 
         Returns:
             A RoutingDecision specifying the tier, model, and
@@ -101,7 +105,11 @@ class Router:
         # Evaluate tiers in order
         for tier in self._config.tiers:
             matched, reason = self._evaluate_tier(
-                tier.name, token_estimate, message_count, content
+                tier.name,
+                token_estimate,
+                message_count,
+                content,
+                difficulty,
             )
             if matched:
                 decision = RoutingDecision(
@@ -129,11 +137,19 @@ class Router:
         token_estimate: int,
         message_count: int,
         content: str,
+        difficulty: int = 0,
     ) -> tuple[bool, str]:
         """Evaluate whether a request matches a specific tier.
 
         All constraints on the tier must be satisfied for a match.
         A tier with no constraints matches unconditionally.
+
+        Args:
+            tier_name: Name of the tier to evaluate.
+            token_estimate: Estimated token count.
+            message_count: Number of messages.
+            content: Concatenated text content.
+            difficulty: Difficulty level (1-3) or 0 to skip.
 
         Returns:
             Tuple of (matched, reason_string).
@@ -152,6 +168,12 @@ class Router:
             if message_count > tier.max_messages:
                 return False, ""
             reasons.append(f"messages({message_count}) <= {tier.max_messages}")
+
+        # Check difficulty constraint (skip when difficulty=0 / unknown)
+        if tier.max_difficulty is not None and difficulty > 0:
+            if difficulty > tier.max_difficulty:
+                return False, ""
+            reasons.append(f"difficulty({difficulty}) <= {tier.max_difficulty}")
 
         # Check pattern constraint
         compiled = self._compiled_patterns.get(tier_name, [])

@@ -357,3 +357,218 @@ class TestRouterTierOrder:
         decision = router.route(token_estimate=5000, message_count=5, content="")
         assert decision.tier_name == "first"
         assert decision.model == "model-a"
+
+
+class TestRouterDifficultyMatching:
+    """Tests for Router difficulty-based tier matching."""
+
+    def test_matches_tier_by_difficulty(self) -> None:
+        """Router matches tier when difficulty is within max_difficulty."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-sonnet-4",
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # difficulty=1 (Simple) — matches fast tier
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=1,
+        )
+        assert decision.tier_name == "fast"
+        assert decision.model == "claude-sonnet-4"
+
+    def test_exceeds_difficulty_falls_through(self) -> None:
+        """Router falls through when difficulty exceeds max_difficulty."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-sonnet-4",
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # difficulty=3 (Complex) — falls through to premium
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=3,
+        )
+        assert decision.tier_name == "premium"
+        assert decision.model == "claude-opus-4"
+
+    def test_difficulty_zero_skips_constraint(self) -> None:
+        """difficulty=0 (unknown) skips the difficulty constraint."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-sonnet-4",
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # difficulty=0 (unknown) — max_difficulty constraint is skipped
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=0,
+        )
+        assert decision.tier_name == "fast"
+
+    def test_difficulty_combined_with_tokens(self) -> None:
+        """Difficulty constraint works alongside token constraint (AND logic)."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-sonnet-4",
+                    max_tokens=10000,
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # Both under threshold — matches fast
+        decision = router.route(
+            token_estimate=5000,
+            message_count=5,
+            content="",
+            difficulty=1,
+        )
+        assert decision.tier_name == "fast"
+
+        # Tokens under, difficulty over — falls through
+        decision = router.route(
+            token_estimate=5000,
+            message_count=5,
+            content="",
+            difficulty=3,
+        )
+        assert decision.tier_name == "premium"
+
+        # Tokens over, difficulty under — falls through
+        decision = router.route(
+            token_estimate=15000,
+            message_count=5,
+            content="",
+            difficulty=1,
+        )
+        assert decision.tier_name == "premium"
+
+    def test_difficulty_default_is_zero(self) -> None:
+        """Calling route() without difficulty defaults to 0 (skip)."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-sonnet-4",
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # No difficulty argument — defaults to 0, difficulty check skipped
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+        )
+        assert decision.tier_name == "fast"
+
+    def test_three_tier_difficulty_routing(self) -> None:
+        """Three-tier setup: simple→fast, medium→standard, complex→premium."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="gpt-4o-mini",
+                    max_difficulty=1,
+                ),
+                ModelTier(
+                    name="standard",
+                    model="claude-sonnet-4",
+                    max_difficulty=2,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # Simple → fast
+        d = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=1,
+        )
+        assert d.tier_name == "fast"
+
+        # Medium → standard
+        d = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=2,
+        )
+        assert d.tier_name == "standard"
+
+        # Complex → premium (no max_difficulty = unconditional match)
+        d = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=3,
+        )
+        assert d.tier_name == "premium"
