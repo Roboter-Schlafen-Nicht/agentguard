@@ -39,7 +39,8 @@ AgentGuard guards AI agents at **two layers**:
    outbound prompts for secrets/PII before they reach the LLM. Scans
    inbound responses for prompt injection and exfiltration patterns in
    real time, including streaming (SSE). Terminates dangerous streams
-   mid-flight. Compresses bloated conversations via context compaction
+   mid-flight. Routes requests to cheaper models when the task is simple
+   (model routing). Compresses bloated conversations via context compaction
    before forwarding, saving tokens and money on every request.
 
 <p align="center">
@@ -325,6 +326,41 @@ agentguard proxy https://api.openai.com \
 Compaction metrics (phase used, tokens before/after) are recorded in
 every audit log entry, so you can measure savings over time.
 
+### Model Routing
+
+Route requests to different LLM models based on task complexity. Simple
+queries go to fast, cheap models (Haiku at 0.33× cost); complex reasoning
+goes to premium models (Opus at 3× cost). A DistilBERT classifier scores
+query difficulty in real time:
+
+```bash
+agentguard proxy https://api.openai.com \
+  --routing-config routing.yaml \
+  --classifier-url http://localhost:11435 \
+  --routing-log-dir /var/log/agentguard \
+  --audit-dir audit/
+```
+
+```yaml
+# routing.yaml
+routing:
+  enabled: true
+  tiers:
+    - name: fast
+      model: claude-haiku-4.5
+      max_difficulty: 2    # Simple + medium queries
+    - name: premium
+      model: claude-opus-4.5
+      # No max_difficulty = fallback for complex
+```
+
+The classifier extracts the last user message (skipping tool results) and
+returns a difficulty score (1=simple, 2=medium, 3=complex). Fail-open: if
+the classifier is unavailable, requests pass through to the original model.
+
+Routing decisions are logged with structured metrics (tier, model, reason,
+difficulty) for cost analysis.
+
 ### Delta Scanning
 
 By default, the proxy scans the entire conversation on every request.
@@ -568,9 +604,11 @@ src/agentguard/
   mcp/              MCP server: transparent tool proxy with policy enforcement
   proxy/            LLM API proxy: middleware, outbound/inbound scanners
     compaction/     Context compaction: truncation, summarization, metrics
+    routing/        Model routing: difficulty classifier, tier-based routing
     providers/      Format adapters: Provider protocol, OpenAI adapter
   scanner/          Package scanner: regex-based source code analysis, 6 risk categories
   trust/            Trust registry: trust levels, hash verification, YAML persistence
+  sandbox/          Policy sandbox: scenario runner, TPR/FPR gating
   cli.py            Command-line interface
 ```
 
@@ -583,7 +621,7 @@ src/agentguard/
 5. **Streaming-aware** — scans SSE responses in real time, terminates on violation
 6. **Extensible** — YAML policies, pluggable providers, pluggable interceptors
 7. **Type-safe** — full mypy strict compliance, py.typed marker
-8. **Tested** — 1700+ tests, TDD, CI on Python 3.10–3.13
+8. **Tested** — 1850+ tests, TDD, CI on Python 3.10–3.13
 
 ## Roadmap
 
@@ -604,6 +642,7 @@ src/agentguard/
 - [ ] Anthropic provider adapter
 - [x] Audit log rotation and retention (size/age thresholds, file count limits)
 - [x] Context compaction (rule-based truncation + local model summarization)
+- [x] Model routing (difficulty classifier + tier-based model selection)
 - [x] Delta scanning (incremental message scanning)
 - [x] Policy sandbox (scenario-driven validation, deployment gating)
 - [x] Web fetch tool (JS-rendering headless browser)
