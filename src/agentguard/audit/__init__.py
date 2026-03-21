@@ -8,9 +8,9 @@ from agentguard.audit.retention import RetentionConfig, enforce_retention
 from agentguard.audit.rotation import RotationConfig
 
 __all__ = [
+    "CSV_COLUMNS",
     "AuditEntry",
     "AuditLog",
-    "CSV_COLUMNS",
     "CrossSessionReport",
     "RetentionConfig",
     "RotationConfig",

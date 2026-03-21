@@ -13,10 +13,12 @@ from __future__ import annotations
 import csv
 import json
 import sqlite3
-from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
     from agentguard.audit.models import AuditEntry
 
 #: Canonical column order used by the CSV exporter and as a reference

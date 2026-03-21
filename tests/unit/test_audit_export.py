@@ -12,14 +12,12 @@ Covers:
 from __future__ import annotations
 
 import csv
-import io
 import json
 import sqlite3
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-import pytest
-
+from agentguard.audit.log import AuditLog
 from agentguard.audit.models import AuditEntry
 
 if TYPE_CHECKING:
@@ -394,8 +392,6 @@ class TestCLIExport:
 
     def test_export_json_via_cli(self, tmp_path: Path) -> None:
         """CLI exports to JSON format."""
-        from agentguard.audit.log import AuditLog
-
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
         self._write_audit_log(audit_dir)
@@ -416,8 +412,6 @@ class TestCLIExport:
 
     def test_export_csv_via_cli(self, tmp_path: Path) -> None:
         """CLI exports to CSV format."""
-        from agentguard.audit.log import AuditLog
-
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
         self._write_audit_log(audit_dir)
@@ -440,8 +434,6 @@ class TestCLIExport:
 
     def test_export_sqlite_via_cli(self, tmp_path: Path) -> None:
         """CLI exports to SQLite format."""
-        from agentguard.audit.log import AuditLog
-
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
         self._write_audit_log(audit_dir)
@@ -473,8 +465,6 @@ class TestCLIExport:
 
     def test_export_with_action_filter(self, tmp_path: Path) -> None:
         """CLI --action filter limits exported entries."""
-        from agentguard.audit.log import AuditLog
-
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
         self._write_audit_log(audit_dir)
@@ -498,8 +488,6 @@ class TestCLIExport:
 
     def test_export_with_result_filter(self, tmp_path: Path) -> None:
         """CLI --result filter limits exported entries."""
-        from agentguard.audit.log import AuditLog
-
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
         self._write_audit_log(audit_dir)
@@ -542,8 +530,6 @@ class TestCLIExport:
 
     def test_export_default_format_is_json(self, tmp_path: Path) -> None:
         """When --format is omitted, default to JSON."""
-        from agentguard.audit.log import AuditLog
-
         audit_dir = tmp_path / "audit"
         audit_dir.mkdir()
         self._write_audit_log(audit_dir)
@@ -562,8 +548,6 @@ class TestCLIExport:
 
 
 # ── Helpers ───────────────────────────────────────────────────────
-
-from agentguard.audit.log import AuditLog
 
 
 def _run_cli(*args: str) -> int:
