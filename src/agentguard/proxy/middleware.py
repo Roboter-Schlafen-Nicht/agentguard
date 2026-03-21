@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from agentguard.proxy.compaction.engine import CompactionEngine
     from agentguard.proxy.config import ProxyConfig
     from agentguard.proxy.providers import Provider
+    from agentguard.proxy.routing.classifier import DifficultyClassifier
     from agentguard.proxy.routing.router import Router
 
 from agentguard.audit.log import AuditLog
@@ -77,6 +78,8 @@ class GuardMiddleware:
         self.compaction_engine = self._build_compaction_engine()
         # Model routing (optional)
         self.router = self._build_router()
+        # Difficulty classifier (optional, requires routing + URL)
+        self._classifier = self._build_classifier()
 
     def _build_compaction_engine(self) -> CompactionEngine | None:
         """Build a CompactionEngine if compaction is configured and enabled.
@@ -103,14 +106,33 @@ class GuardMiddleware:
             return Router(self.config.routing)
         return None
 
-    def _apply_routing(
+    def _build_classifier(self) -> DifficultyClassifier | None:
+        """Build a DifficultyClassifier if routing has a classifier URL.
+
+        Returns:
+            A DifficultyClassifier instance, or None if no classifier
+            URL is configured.
+        """
+        if self.config.routing is not None and self.config.routing.classifier_url:
+            from agentguard.proxy.routing.classifier import (
+                DifficultyClassifier,
+            )
+
+            return DifficultyClassifier(
+                url=self.config.routing.classifier_url,
+            )
+        return None
+
+    async def _apply_routing(
         self,
         body: bytes,
     ) -> tuple[bytes, Any]:
         """Apply model routing to the request body.
 
         Parses the body, evaluates routing rules, and rewrites the
-        model field if a routing decision is made.
+        model field if a routing decision is made.  When a difficulty
+        classifier is configured, classifies the request content and
+        passes the difficulty level to the router.
 
         Args:
             body: The raw request body bytes.
@@ -164,11 +186,17 @@ class GuardMiddleware:
         all_content = " ".join(content_parts)
         token_est = estimate_tokens(all_content)
 
+        # Classify difficulty if classifier is configured
+        difficulty = 0
+        if self._classifier is not None:
+            difficulty = await self._classifier.classify(all_content)
+
         # Route the request
         decision = self.router.route(
             token_estimate=token_est,
             message_count=message_count,
             content=all_content,
+            difficulty=difficulty,
         )
 
         # Rewrite model if the decision specifies one
@@ -406,7 +434,7 @@ class GuardMiddleware:
 
         # Model routing: select model/upstream based on complexity
         routing_decision = None
-        body, routing_decision = self._apply_routing(body)
+        body, routing_decision = await self._apply_routing(body)
         upstream_override = routing_decision.upstream_url
 
         # Check allowed endpoints

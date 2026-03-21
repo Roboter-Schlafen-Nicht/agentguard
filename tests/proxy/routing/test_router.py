@@ -334,6 +334,102 @@ class TestRouterUpstreamOverride:
         assert decision.upstream_url == "https://api.anthropic.com"
 
 
+class TestRouterNullModelPassthrough:
+    """Tests for Router with model=None tiers (no model override)."""
+
+    def test_null_model_tier_returns_none_model(self) -> None:
+        """Tier with model=None returns decision.model=None."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="passthrough",
+                    max_tokens=10000,
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        decision = router.route(
+            token_estimate=5000,
+            message_count=5,
+            content="",
+            difficulty=1,
+        )
+        assert decision.tier_name == "passthrough"
+        assert decision.model is None
+
+    def test_null_model_falls_through_to_model_tier(self) -> None:
+        """When null-model tier doesn't match, falls to tier with model."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="passthrough",
+                    max_tokens=10000,
+                    max_difficulty=1,
+                ),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # difficulty=3 exceeds passthrough max_difficulty=1
+        decision = router.route(
+            token_estimate=5000,
+            message_count=5,
+            content="",
+            difficulty=3,
+        )
+        assert decision.tier_name == "premium"
+        assert decision.model == "claude-opus-4"
+
+    def test_all_tiers_null_model(self) -> None:
+        """All tiers with model=None — no model override ever happens."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    max_tokens=10000,
+                    max_difficulty=1,
+                ),
+                ModelTier(
+                    name="standard",
+                    max_tokens=40000,
+                    max_difficulty=2,
+                ),
+                ModelTier(name="premium"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        for diff in [1, 2, 3]:
+            decision = router.route(
+                token_estimate=5000,
+                message_count=5,
+                content="",
+                difficulty=diff,
+            )
+            assert decision.model is None, (
+                f"difficulty={diff}: expected model=None, got model={decision.model}"
+            )
+
+
 class TestRouterTierOrder:
     """Tests for Router tier evaluation order."""
 
