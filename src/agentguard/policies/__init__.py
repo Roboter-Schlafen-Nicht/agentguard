@@ -4,10 +4,20 @@ from agentguard.policies.builtins import list_builtins, load_all_builtins, load_
 from agentguard.policies.discovery import auto_discover, discover_policies
 from agentguard.policies.guard import Guard
 from agentguard.policies.loader import load_policy_from_string, load_policy_from_yaml
-from agentguard.policies.models import Action, Decision, Policy, Rule, Severity
+from agentguard.policies.models import (
+    Action,
+    Condition,
+    Context,
+    Decision,
+    Policy,
+    Rule,
+    Severity,
+)
 
 __all__ = [
     "Action",
+    "Condition",
+    "Context",
     "Decision",
     "Guard",
     "Policy",

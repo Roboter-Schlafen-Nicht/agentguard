@@ -1,4 +1,4 @@
-"""Policy data models: Severity, Action, Rule, Decision, Policy.
+"""Policy data models: Severity, Action, Rule, Decision, Policy, Condition, Context.
 
 These are the core types used throughout the AgentGuard policy engine.
 All are immutable (frozen dataclasses or enums) for safety.
@@ -7,11 +7,13 @@ All are immutable (frozen dataclasses or enums) for safety.
 from __future__ import annotations
 
 import enum
+import fnmatch
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import re
+    from datetime import datetime, time
 
 
 class Severity(enum.Enum):
@@ -85,6 +87,109 @@ class Action:
     params: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class Context:
+    """Runtime context for conditional policy evaluation.
+
+    Provides environmental information used by :class:`Condition` to
+    determine whether a rule is active. All fields are optional; when
+    a condition references a context field that is ``None``, the
+    condition is considered *not met* (fail-closed for the condition,
+    meaning the rule is skipped).
+
+    Attributes:
+        time: Current UTC timestamp. Used by time-of-day and weekday
+            conditions.
+        environment: Deployment environment name (e.g., "production",
+            "staging", "development").
+        branch: Current git branch name. Supports fnmatch-style
+            patterns in conditions (e.g., ``"feature/*"``).
+        variables: Additional custom key-value context for future
+            extensibility.
+    """
+
+    time: datetime | None = None
+    environment: str | None = None
+    branch: str | None = None
+    variables: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Condition:
+    """Conditions that must be met for a rule to be active.
+
+    All specified conditions are AND-combined: every non-None field
+    must match the provided :class:`Context` for the condition to be
+    met. If a condition field is ``None``, it imposes no constraint.
+
+    YAML example::
+
+        conditions:
+          time_after: "09:00"
+          time_before: "17:00"
+          environment: production
+          branch: main
+          weekdays: [0, 1, 2, 3, 4]
+
+    Attributes:
+        time_after: Rule is active only after this time of day (UTC).
+        time_before: Rule is active only before this time of day (UTC).
+        environment: Rule is active only in this environment
+            (case-insensitive match).
+        branch: Rule is active only on this branch. Supports
+            fnmatch-style patterns (e.g., ``"feature/*"``).
+        weekdays: Rule is active only on these days of the week.
+            Monday=0 through Sunday=6 (ISO weekday numbering).
+    """
+
+    time_after: time | None = None
+    time_before: time | None = None
+    environment: str | None = None
+    branch: str | None = None
+    weekdays: list[int] | None = None
+
+    def is_met(self, ctx: Context) -> bool:
+        """Evaluate whether all conditions are satisfied by the context.
+
+        Args:
+            ctx: The runtime context to check against.
+
+        Returns:
+            True if all specified conditions are met.
+        """
+        if self.time_after is not None:
+            if ctx.time is None:
+                return False
+            if ctx.time.time() < self.time_after:
+                return False
+
+        if self.time_before is not None:
+            if ctx.time is None:
+                return False
+            if ctx.time.time() >= self.time_before:
+                return False
+
+        if self.weekdays is not None:
+            if ctx.time is None:
+                return False
+            if ctx.time.weekday() not in self.weekdays:
+                return False
+
+        if self.environment is not None:
+            if ctx.environment is None:
+                return False
+            if self.environment.lower() != ctx.environment.lower():
+                return False
+
+        if self.branch is not None:
+            if ctx.branch is None:
+                return False
+            if not fnmatch.fnmatch(ctx.branch, self.branch):
+                return False
+
+        return True
+
+
 @dataclass
 class Rule:
     """A deny rule within a policy.
@@ -122,6 +227,7 @@ class Rule:
     description: str | None = None
     scan: ScanTarget | None = None
     min_unique_chars: int | None = None
+    conditions: Condition | None = None
 
     def _has_sufficient_entropy(self, match: re.Match[str]) -> bool:
         """Check if a regex match has enough unique characters.
@@ -141,10 +247,27 @@ class Rule:
         unique_count = len(set(matched_text))
         return unique_count >= self.min_unique_chars
 
-    def matches(self, action: Action) -> bool:
-        """Check if this rule matches the given action."""
+    def matches(self, action: Action, context: Context | None = None) -> bool:
+        """Check if this rule matches the given action.
+
+        When the rule has conditions, they are checked against the
+        provided context first. If conditions are not met (or context
+        is missing when conditions require it), the rule is skipped.
+
+        Args:
+            action: The action to check.
+            context: Optional runtime context for conditional evaluation.
+
+        Returns:
+            True if the rule matches (action should be denied).
+        """
         if action.kind != self.action_kind:
             return False
+        if self.conditions is not None:
+            if context is None:
+                return False
+            if not self.conditions.is_met(context):
+                return False
         if self.scan is not None:
             return self._matches_scan_target(action)
         for pattern in self.deny_patterns:
@@ -215,13 +338,18 @@ class Policy:
     rules: list[Rule]
     description: str | None = None
 
-    def evaluate(self, action: Action) -> Decision:
+    def evaluate(self, action: Action, context: Context | None = None) -> Decision:
         """Evaluate an action against all rules in this policy.
 
-        Returns the first matching rule's decision, or allows if none match.
+        Args:
+            action: The action to check.
+            context: Optional runtime context for conditional rules.
+
+        Returns:
+            The first matching rule's decision, or allows if none match.
         """
         for rule in self.rules:
-            if rule.matches(action):
+            if rule.matches(action, context=context):
                 return Decision(
                     allowed=False,
                     denied_by=self.name,
