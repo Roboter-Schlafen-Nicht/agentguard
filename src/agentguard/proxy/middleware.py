@@ -19,13 +19,14 @@ if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
 
+    from agentguard.audit.log import AuditLog
     from agentguard.proxy.compaction.engine import CompactionEngine
     from agentguard.proxy.config import ProxyConfig
     from agentguard.proxy.providers import Provider
     from agentguard.proxy.routing.classifier import DifficultyClassifier
     from agentguard.proxy.routing.router import Router
 
-from agentguard.audit.log import AuditLog
+from agentguard.audit.unified import Source, SourceAuditLog
 from agentguard.policies.guard import Guard
 from agentguard.proxy.outbound import estimate_tokens
 
@@ -70,7 +71,7 @@ class GuardMiddleware:
         self.provider = self._resolve_provider()
         self._auth_token: str | None = self._load_auth_token()
         self.session_id = f"proxy-{uuid.uuid4().hex[:12]}"
-        self.audit_log = AuditLog(self.session_id)
+        self.audit_log: AuditLog = SourceAuditLog(self.session_id, source=Source.PROXY)
         # Delta scanning: track how many messages have been scanned
         # per conversation, keyed by conversation fingerprint.
         self._seen_messages: dict[str, int] = {}
