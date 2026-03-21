@@ -82,6 +82,8 @@ def _parse_policy(data: dict[str, Any]) -> Policy:
     policy_type = data.get("type")
     if policy_type == "domain_allowlist":
         return _parse_domain_allowlist(data)
+    if policy_type == "fs_allowlist":
+        return _parse_fs_allowlist(data)
 
     if "rules" not in data or not data["rules"]:
         msg = "Policy must have a non-empty 'rules' field"
@@ -121,6 +123,34 @@ def _parse_domain_allowlist(data: dict[str, Any]) -> Policy:
     return DomainAllowlist(
         name=data["name"],
         domains=domains,
+        presets=presets,
+        action_kind=action_kind,
+        description=description,
+    )
+
+
+def _parse_fs_allowlist(data: dict[str, Any]) -> Policy:
+    """Parse a fs_allowlist policy from a YAML dict.
+
+    Expected fields:
+    - name (required)
+    - action (optional, default "file_write")
+    - paths (optional, list of path strings)
+    - presets (optional, list of preset names)
+    - description (optional)
+
+    At least one of paths or presets must be provided.
+    """
+    from agentguard.policies.fs_allowlist import FilesystemAllowlist
+
+    allowed_paths = data.get("paths")
+    presets = data.get("presets")
+    action_kind = data.get("action", "file_write")
+    description = data.get("description")
+
+    return FilesystemAllowlist(
+        name=data["name"],
+        allowed_paths=allowed_paths,
         presets=presets,
         action_kind=action_kind,
         description=description,
