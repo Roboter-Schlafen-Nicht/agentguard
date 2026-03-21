@@ -749,7 +749,7 @@ class TestClassifierWindowing:
                             {
                                 "type": "tool_result",
                                 "tool_use_id": "toolu_1",
-                                "content": "complex distributed system architecture output",
+                                "content": "complex system output",
                             }
                         ],
                     },
@@ -766,7 +766,7 @@ class TestClassifierWindowing:
         # Last real user message
         assert "Thanks, looks good" in classified_text
         # Tool result content should NOT be included
-        assert "distributed system architecture" not in classified_text
+        assert "complex system output" not in classified_text
 
     @pytest.mark.asyncio
     async def test_classifier_with_only_tool_messages_at_end(self) -> None:
