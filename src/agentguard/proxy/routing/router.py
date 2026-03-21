@@ -119,7 +119,8 @@ class Router:
                     reason=reason,
                 )
                 logger.info(
-                    "routing_decision tier=%s model=%s reason=%s tokens=%d messages=%d difficulty=%d",
+                    "routing_decision tier=%s model=%s reason=%s"
+                    " tokens=%d messages=%d difficulty=%d",
                     tier.name,
                     tier.model,
                     reason,
@@ -210,7 +211,8 @@ class Router:
         for tier in self._config.tiers:
             if tier.name == default_name:
                 logger.info(
-                    "routing_default tier=%s model=%s tokens=%d messages=%d difficulty=%d",
+                    "routing_default tier=%s model=%s"
+                    " tokens=%d messages=%d difficulty=%d",
                     tier.name,
                     tier.model,
                     token_estimate,
