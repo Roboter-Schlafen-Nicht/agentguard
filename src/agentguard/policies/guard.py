@@ -7,6 +7,8 @@ policy engine.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from agentguard.policies.loader import load_policy_from_string, load_policy_from_yaml
@@ -14,6 +16,11 @@ from agentguard.policies.models import Action, Context, Decision, Policy
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+#: Type alias for deny handler callables.
+DenyHandler = Callable[[Decision, Action], None]
 
 
 class Guard:
@@ -38,6 +45,7 @@ class Guard:
             policies: Optional list of policies to start with.
         """
         self._policies: list[Policy] = list(policies) if policies else []
+        self._deny_handlers: list[DenyHandler] = []
 
     @classmethod
     def with_auto_discovery(cls, *, include_builtins: bool = False) -> Guard:
@@ -84,6 +92,22 @@ class Guard:
             the policy has no version).
         """
         return {p.name: p.version for p in self._policies}
+
+    def on_deny(self, handler: DenyHandler) -> Guard:
+        """Register a handler to be called when a policy denies an action.
+
+        Handlers are invoked synchronously after a deny decision, in the
+        order they were registered. Handler exceptions are logged but do
+        not affect the deny decision.
+
+        Args:
+            handler: A callable accepting ``(Decision, Action)``.
+
+        Returns:
+            Self, for method chaining.
+        """
+        self._deny_handlers.append(handler)
+        return self
 
     def add_policy(self, policy: Policy) -> Guard:
         """Add a policy to the guard.
@@ -146,5 +170,24 @@ class Guard:
         for policy in self._policies:
             decision = policy.evaluate(action, context=context)
             if decision.denied:
+                self._invoke_deny_handlers(decision, action)
                 return decision
         return Decision(allowed=True)
+
+    def _invoke_deny_handlers(
+        self,
+        decision: Decision,
+        action: Action,
+    ) -> None:
+        """Invoke all registered deny handlers.
+
+        Exceptions from handlers are logged but do not propagate.
+        """
+        for handler in self._deny_handlers:
+            try:
+                handler(decision, action)
+            except Exception:
+                logger.exception(
+                    "Deny handler %r raised an exception",
+                    handler,
+                )
