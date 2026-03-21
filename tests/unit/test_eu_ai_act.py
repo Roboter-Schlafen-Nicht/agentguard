@@ -53,12 +53,13 @@ class TestEUAIActReportGenerator:
         log = _make_log([{"action": "file_read", "result": "allowed"}])
         generator = EUAIActReportGenerator()
         report = generator.generate(log)
-        assert len(report.sections) == 4
+        assert len(report.sections) == 5
         articles = [s.article for s in report.sections]
         assert "Art. 9" in articles
         assert "Art. 12" in articles
         assert "Art. 13" in articles
         assert "Art. 14" in articles
+        assert "Art. 5/9" in articles
 
     def test_report_generated_at_is_set(self) -> None:
         log = _make_log([{"action": "file_read", "result": "allowed"}])
@@ -344,8 +345,8 @@ class TestEdgeCases:
         )
         generator = EUAIActReportGenerator()
         report = generator.generate(log)
-        # Should produce a valid report with all 4 sections
-        assert len(report.sections) == 4
+        # Should produce a valid report with all 5 sections
+        assert len(report.sections) == 5
         # Should have both info and warning findings
         all_findings = [f for s in report.sections for f in s.findings]
         severities = {f.severity for f in all_findings}
