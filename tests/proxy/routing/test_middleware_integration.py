@@ -557,14 +557,24 @@ class TestMiddlewareClassifierWiring:
 
 
 class TestClassifierWindowing:
-    """Tests for last-N-messages windowing sent to the classifier."""
+    """Tests for classifier input extraction from conversation messages.
+
+    The classifier should only see the last human message — not tool
+    call/result chatter.  In agentic sessions, the last several messages
+    are typically assistant tool_use + tool results, which contain code,
+    diffs, and CI logs that the classifier misclassifies as Complex.
+
+    OpenAI format: tool results have role="tool"
+    Anthropic format: tool results have role="user" + content=[{type: "tool_result"}]
+    """
 
     @pytest.mark.asyncio
-    async def test_classifier_receives_only_last_n_messages(self) -> None:
-        """Classifier receives content from only the last N messages.
+    async def test_classifier_sees_last_user_message_only(self) -> None:
+        """Classifier receives only the last human user message.
 
-        With classifier_window=2, a 5-message conversation should
-        only pass the last 2 messages' content to the classifier.
+        In a conversation with tool calls between user messages, the
+        classifier should skip assistant and tool messages and only
+        classify the most recent user message.
         """
         from unittest.mock import AsyncMock, patch
 
@@ -575,7 +585,6 @@ class TestClassifierWindowing:
         routing = RoutingConfig(
             enabled=True,
             classifier_url="http://localhost:11435",
-            classifier_window=2,
             tiers=[
                 ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
                 ModelTier(name="premium", model="claude-opus-4.6"),
@@ -592,60 +601,41 @@ class TestClassifierWindowing:
             {
                 "model": "claude-opus-4.6",
                 "messages": [
-                    {"role": "user", "content": "old message 1"},
-                    {"role": "assistant", "content": "old reply 1"},
-                    {"role": "user", "content": "old message 2"},
-                    {"role": "assistant", "content": "old reply 2"},
-                    {"role": "user", "content": "latest question"},
-                ],
-            }
-        ).encode()
-
-        with patch.object(mw, "_classifier", create=True) as mock_classifier:
-            mock_classifier.classify = AsyncMock(return_value=1)
-            await mw._apply_routing(body)
-
-        # Classifier should have been called with only the last 2
-        # messages' content, not all 5
-        call_args = mock_classifier.classify.call_args
-        classified_text = call_args[0][0]
-        assert "old message 1" not in classified_text
-        assert "old reply 1" not in classified_text
-        assert "old message 2" not in classified_text
-        assert "old reply 2" in classified_text
-        assert "latest question" in classified_text
-
-    @pytest.mark.asyncio
-    async def test_classifier_window_with_fewer_messages(self) -> None:
-        """When conversation has fewer messages than window, use all."""
-        from unittest.mock import AsyncMock, patch
-
-        from agentguard.proxy.config import ProxyConfig
-        from agentguard.proxy.middleware import GuardMiddleware
-        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
-
-        routing = RoutingConfig(
-            enabled=True,
-            classifier_url="http://localhost:11435",
-            classifier_window=10,  # Window larger than message count
-            tiers=[
-                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
-                ModelTier(name="premium", model="claude-opus-4.6"),
-            ],
-            default_tier="premium",
-        )
-        config = ProxyConfig(
-            upstream_base_url="https://api.example.com",
-            routing=routing,
-        )
-        mw = GuardMiddleware(config)
-
-        body = json.dumps(
-            {
-                "model": "claude-opus-4.6",
-                "messages": [
-                    {"role": "user", "content": "hello"},
-                    {"role": "assistant", "content": "hi there"},
+                    {"role": "user", "content": "Help me architect a system"},
+                    {"role": "assistant", "content": "Sure, let me run some commands"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "bash", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_1",
+                        "content": "complex output with code diffs...",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_2",
+                                "type": "function",
+                                "function": {"name": "bash", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_2",
+                        "content": "more complex tool output...",
+                    },
+                    {"role": "user", "content": "What is 2+2?"},
                 ],
             }
         ).encode()
@@ -655,17 +645,66 @@ class TestClassifierWindowing:
             await mw._apply_routing(body)
 
         classified_text = mock_classifier.classify.call_args[0][0]
-        # Both messages should be included (fewer than window)
-        assert "hello" in classified_text
-        assert "hi there" in classified_text
+        # Only the last user message should be classified
+        assert "What is 2+2?" in classified_text
+        # Earlier messages and tool output should NOT be included
+        assert "architect" not in classified_text
+        assert "complex output" not in classified_text
+        assert "more complex" not in classified_text
 
     @pytest.mark.asyncio
-    async def test_router_still_gets_full_content(self) -> None:
-        """Router receives ALL content for token estimation and patterns.
+    async def test_classifier_skips_tool_role_messages(self) -> None:
+        """Messages with role='tool' (OpenAI format) are not classified."""
+        from unittest.mock import AsyncMock, patch
 
-        The classifier window only limits what the classifier sees.
-        The router still gets the full content for token estimation,
-        pattern matching, and message count.
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "simple question"},
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_1",
+                        "content": "def complex_algorithm(): ...",
+                    },
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            await mw._apply_routing(body)
+
+        classified_text = mock_classifier.classify.call_args[0][0]
+        assert "simple question" in classified_text
+        assert "complex_algorithm" not in classified_text
+
+    @pytest.mark.asyncio
+    async def test_classifier_skips_anthropic_tool_result(self) -> None:
+        """Anthropic-format tool_result messages are not classified.
+
+        Anthropic sends tool results as role='user' with content
+        containing {type: 'tool_result'} blocks.  These should be
+        skipped — only real human text messages count.
         """
         from unittest.mock import AsyncMock, patch
 
@@ -676,7 +715,193 @@ class TestClassifierWindowing:
         routing = RoutingConfig(
             enabled=True,
             classifier_url="http://localhost:11435",
-            classifier_window=1,  # Only classify last message
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "How do I sort a list?"},
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": "toolu_1",
+                                "name": "bash",
+                                "input": {"command": "echo"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_1",
+                                "content": "complex system output",
+                            }
+                        ],
+                    },
+                    {"role": "user", "content": "Thanks, looks good"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            await mw._apply_routing(body)
+
+        classified_text = mock_classifier.classify.call_args[0][0]
+        # Last real user message
+        assert "Thanks, looks good" in classified_text
+        # Tool result content should NOT be included
+        assert "complex system output" not in classified_text
+
+    @pytest.mark.asyncio
+    async def test_classifier_with_only_tool_messages_at_end(self) -> None:
+        """When conversation ends in tool calls, classify last user msg."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "Run the tests please"},
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {"name": "bash", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_1",
+                        "content": "PASSED 1874 tests in 45.2s",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_2",
+                                "type": "function",
+                                "function": {"name": "bash", "arguments": "{}"},
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_2",
+                        "content": "git commit -m 'fix: something'",
+                    },
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            await mw._apply_routing(body)
+
+        classified_text = mock_classifier.classify.call_args[0][0]
+        # Should find the user message before the tool calls
+        assert "Run the tests please" in classified_text
+        # Tool output should not be included
+        assert "PASSED 1874" not in classified_text
+        assert "git commit" not in classified_text
+
+    @pytest.mark.asyncio
+    async def test_classifier_no_user_messages_uses_empty(self) -> None:
+        """If no user messages exist, classifier gets empty string."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant"},
+                    {"role": "assistant", "content": "Hello!"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=0)
+            await mw._apply_routing(body)
+
+        classified_text = mock_classifier.classify.call_args[0][0]
+        assert classified_text == ""
+
+    @pytest.mark.asyncio
+    async def test_router_still_gets_full_content(self) -> None:
+        """Router receives ALL content for token estimation and patterns.
+
+        The classifier only sees the last user message, but the router
+        still gets full content for token estimation, pattern matching,
+        and message count.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
             tiers=[
                 ModelTier(
                     name="pattern-match",
@@ -708,46 +933,6 @@ class TestClassifierWindowing:
             mock_classifier.classify = AsyncMock(return_value=1)
             _, decision = await mw._apply_routing(body)
 
-        # Pattern "architect" is in message 1 (outside classifier window)
+        # Pattern "architect" is in message 1 (not the last user msg)
         # but the router sees ALL content, so pattern match should work
         assert decision.tier_name == "pattern-match"
-
-    @pytest.mark.asyncio
-    async def test_default_classifier_window_is_five(self) -> None:
-        """Default classifier_window is 5 — classifier sees last 5 messages."""
-        from unittest.mock import AsyncMock, patch
-
-        from agentguard.proxy.config import ProxyConfig
-        from agentguard.proxy.middleware import GuardMiddleware
-        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
-
-        routing = RoutingConfig(
-            enabled=True,
-            classifier_url="http://localhost:11435",
-            # Default classifier_window=5
-            tiers=[
-                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
-                ModelTier(name="premium", model="claude-opus-4.6"),
-            ],
-            default_tier="premium",
-        )
-        config = ProxyConfig(
-            upstream_base_url="https://api.example.com",
-            routing=routing,
-        )
-        mw = GuardMiddleware(config)
-
-        messages = [{"role": "user", "content": f"message {i}"} for i in range(10)]
-        body = json.dumps({"model": "claude-opus-4.6", "messages": messages}).encode()
-
-        with patch.object(mw, "_classifier", create=True) as mock_classifier:
-            mock_classifier.classify = AsyncMock(return_value=1)
-            await mw._apply_routing(body)
-
-        classified_text = mock_classifier.classify.call_args[0][0]
-        # Messages 0-4 should NOT be in classifier input
-        assert "message 0" not in classified_text
-        assert "message 4" not in classified_text
-        # Messages 5-9 should be in classifier input (last 5)
-        assert "message 5" in classified_text
-        assert "message 9" in classified_text
