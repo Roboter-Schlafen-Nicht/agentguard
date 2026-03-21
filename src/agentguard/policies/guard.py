@@ -75,6 +75,16 @@ class Guard:
         """Return the list of loaded policies."""
         return self._policies
 
+    @property
+    def policy_versions(self) -> dict[str, str | None]:
+        """Return a mapping of policy names to their versions.
+
+        Returns:
+            Dict mapping policy name to version string (or None if
+            the policy has no version).
+        """
+        return {p.name: p.version for p in self._policies}
+
     def add_policy(self, policy: Policy) -> Guard:
         """Add a policy to the guard.
 
