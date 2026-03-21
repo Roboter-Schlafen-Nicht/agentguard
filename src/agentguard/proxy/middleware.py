@@ -171,19 +171,7 @@ class GuardMiddleware:
 
         # Concatenate message content for pattern matching and
         # token estimation
-        content_parts: list[str] = []
-        for msg in messages:
-            if isinstance(msg, dict):
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    content_parts.append(content)
-                elif isinstance(content, list):
-                    for block in content:
-                        if isinstance(block, dict):
-                            text = block.get("text")
-                            if isinstance(text, str):
-                                content_parts.append(text)
-        all_content = " ".join(content_parts)
+        all_content = self._concatenate_message_content(messages)
         token_est = estimate_tokens(all_content)
 
         # Classify difficulty if classifier is configured.
@@ -769,24 +757,37 @@ class GuardMiddleware:
         message_count = len(messages)
 
         # Concatenate all message content for token estimation
-        content_parts: list[str] = []
+        all_content = self._concatenate_message_content(messages)
+        token_est = estimate_tokens(all_content)
+
+        return message_count, token_est
+
+    @staticmethod
+    def _concatenate_message_content(messages: list[Any]) -> str:
+        """Concatenate text content from all messages.
+
+        Handles both simple string content and OpenAI structured
+        content blocks (``[{"type": "text", "text": "..."}]``).
+
+        Args:
+            messages: The messages array from the request body.
+
+        Returns:
+            Space-joined string of all text content.
+        """
+        parts: list[str] = []
         for msg in messages:
             if isinstance(msg, dict):
                 content = msg.get("content", "")
                 if isinstance(content, str):
-                    content_parts.append(content)
+                    parts.append(content)
                 elif isinstance(content, list):
-                    # OpenAI structured content blocks:
-                    # [{"type": "text", "text": "..."}, ...]
                     for block in content:
                         if isinstance(block, dict):
                             text = block.get("text")
                             if isinstance(text, str):
-                                content_parts.append(text)
-        all_content = " ".join(content_parts)
-        token_est = estimate_tokens(all_content)
-
-        return message_count, token_est
+                                parts.append(text)
+        return " ".join(parts)
 
     @staticmethod
     def _parse_body(body: bytes) -> dict[str, Any] | None:

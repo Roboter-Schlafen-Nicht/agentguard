@@ -718,3 +718,60 @@ class TestRouterDifficultyMatching:
             difficulty=3,
         )
         assert d.tier_name == "premium"
+
+
+class TestRouterDuplicateTierNames:
+    """Tests for Router duplicate tier name detection (#265)."""
+
+    def test_duplicate_tier_names_raises_value_error(self) -> None:
+        """Router raises ValueError when tiers have duplicate names."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="claude-sonnet-4", max_tokens=5000),
+                ModelTier(name="fast", model="claude-opus-4", max_tokens=10000),
+            ],
+            default_tier="fast",
+        )
+
+        with pytest.raises(ValueError, match="Duplicate tier name"):
+            Router(config)
+
+    def test_unique_tier_names_accepted(self) -> None:
+        """Router accepts configs with unique tier names."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="claude-sonnet-4", max_tokens=5000),
+                ModelTier(name="premium", model="claude-opus-4"),
+            ],
+            default_tier="premium",
+        )
+
+        # Should not raise
+        router = Router(config)
+        assert router is not None
+
+    def test_three_tiers_with_duplicate_raises(self) -> None:
+        """Three tiers with one duplicate pair raises ValueError."""
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="fast", model="model-a"),
+                ModelTier(name="standard", model="model-b"),
+                ModelTier(name="fast", model="model-c"),
+            ],
+            default_tier="standard",
+        )
+
+        with pytest.raises(ValueError, match=r"Duplicate tier name.*fast"):
+            Router(config)
