@@ -518,6 +518,55 @@ class TestReportCommand:
         content = output_file.read_text()
         assert "NIST AI RMF" in content
 
+    def test_report_soc2_text(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        exit_code, stdout, _ = _run_cli(
+            "report",
+            "soc-2",
+            str(log_file),
+            "--session",
+            "test-session-001",
+        )
+        assert exit_code == 0
+        assert "SOC 2" in stdout
+        assert "CC" in stdout or "A1" in stdout
+
+    def test_report_soc2_json(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        exit_code, stdout, _ = _run_cli(
+            "report",
+            "soc-2",
+            str(log_file),
+            "--session",
+            "test-session-001",
+            "--format",
+            "json",
+        )
+        assert exit_code == 0
+        data = json.loads(stdout)
+        assert data["framework"] == "SOC 2"
+        assert "sections" in data
+
+    def test_report_soc2_output_to_file(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        output_file = tmp_path / "report.txt"
+        exit_code, _, _ = _run_cli(
+            "report",
+            "soc-2",
+            str(log_file),
+            "--session",
+            "test-session-001",
+            "--output",
+            str(output_file),
+        )
+        assert exit_code == 0
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "SOC 2" in content
+
 
 # --- Help / no args ---
 
