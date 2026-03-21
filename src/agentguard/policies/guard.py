@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agentguard.policies.loader import load_policy_from_string, load_policy_from_yaml
-from agentguard.policies.models import Action, Decision, Policy
+from agentguard.policies.models import Action, Context, Decision, Policy
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -113,11 +113,20 @@ class Guard:
         self._policies.append(policy)
         return self
 
-    def check(self, action_kind: str, **params: str) -> Decision:
+    def check(
+        self,
+        action_kind: str,
+        context: Context | None = None,
+        /,
+        **params: str,
+    ) -> Decision:
         """Check an action against all loaded policies.
 
         Args:
             action_kind: The type of action (e.g. "shell_command").
+            context: Optional runtime context for conditional rules.
+                Pass a :class:`Context` with environment, branch,
+                time, etc. to enable conditional policy evaluation.
             **params: Key-value parameters for the action.
 
         Returns:
@@ -125,7 +134,7 @@ class Guard:
         """
         action = Action(kind=action_kind, params=params)
         for policy in self._policies:
-            decision = policy.evaluate(action)
+            decision = policy.evaluate(action, context=context)
             if decision.denied:
                 return decision
         return Decision(allowed=True)
