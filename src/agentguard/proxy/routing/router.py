@@ -63,6 +63,18 @@ class Router:
 
     def __init__(self, config: RoutingConfig) -> None:
         self._config = config
+
+        # Validate tier names are unique (#265).  Duplicate names
+        # cause _compiled_patterns to overwrite earlier entries while
+        # _evaluate_tier uses next() to find the first tier, creating
+        # a mismatch.
+        seen_names: set[str] = set()
+        for tier in config.tiers:
+            if tier.name in seen_names:
+                msg = f"Duplicate tier name: '{tier.name}'"
+                raise ValueError(msg)
+            seen_names.add(tier.name)
+
         # Pre-compile patterns for each tier
         self._compiled_patterns: dict[str, list[re.Pattern[str]]] = {}
         for tier in config.tiers:
@@ -86,8 +98,8 @@ class Router:
             content: Concatenated text content of the request
                 (used for pattern matching).
             difficulty: Difficulty level from the classifier (1-3),
-                or 0 if unknown/unavailable.  0 skips difficulty
-                constraints.
+                or 0 if unknown/unavailable.  0 rejects tiers with
+                max_difficulty (fail-closed).
 
         Returns:
             A RoutingDecision specifying the tier, model, and
@@ -155,7 +167,8 @@ class Router:
             token_estimate: Estimated token count.
             message_count: Number of messages.
             content: Concatenated text content.
-            difficulty: Difficulty level (1-3) or 0 to skip.
+            difficulty: Difficulty level (1-3) or 0 to reject
+                tiers with max_difficulty (fail-closed).
 
         Returns:
             Tuple of (matched, reason_string).

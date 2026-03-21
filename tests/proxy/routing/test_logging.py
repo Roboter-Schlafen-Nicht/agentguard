@@ -148,10 +148,6 @@ class TestRouterLogging:
         with caplog.at_level(logging.WARNING, logger="agentguard.proxy.routing.router"):
             # Token estimate exceeds all tiers' max_tokens
             router.route(token_estimate=50000, message_count=100, content="big")
-        router = Router(config)
-
-        with caplog.at_level(logging.WARNING, logger="agentguard.proxy.routing.router"):
-            router.route(token_estimate=50000, message_count=100, content="big")
 
         warn_records = [
             r
@@ -159,7 +155,7 @@ class TestRouterLogging:
             if r.levelno == logging.WARNING
             and "agentguard.proxy.routing.router" in r.name
         ]
-        assert len(warn_records) >= 1, (
+        assert len(warn_records) == 1, (
             f"Expected WARNING when default tier not found, got: {caplog.text}"
         )
         warn_text = " ".join(r.getMessage() for r in warn_records)

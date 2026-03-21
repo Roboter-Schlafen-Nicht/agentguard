@@ -359,8 +359,8 @@ class TestMiddlewareClassifierWiring:
             mock_classifier.classify = AsyncMock(return_value=1)
             _new_body, decision = await mw._apply_routing(body)
 
-        # Classifier was called with the content
-        mock_classifier.classify.assert_awaited_once()
+        # Classifier was called with the user message content
+        mock_classifier.classify.assert_awaited_once_with("What is 2+2?")
         # Routed to fast tier because difficulty=1 <= max_difficulty=1
         assert decision.tier_name == "fast"
 
@@ -452,7 +452,7 @@ class TestMiddlewareClassifierWiring:
             }
         ).encode()
 
-        # Classifier returns 0 (fail-open)
+        # Classifier returns 0 (fail-closed — rejects difficulty-constrained tiers)
         with patch.object(mw, "_classifier", create=True) as mock_classifier:
             mock_classifier.classify = AsyncMock(return_value=0)
             _new_body, decision = await mw._apply_routing(body)
