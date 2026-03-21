@@ -81,9 +81,11 @@ class Provider(Protocol):
 
 def _build_registry() -> dict[str, Provider]:
     """Build the provider registry lazily."""
+    from agentguard.proxy.providers.anthropic import AnthropicProvider
     from agentguard.proxy.providers.openai import OpenAIProvider
 
     return {
+        "anthropic": AnthropicProvider(),
         "openai": OpenAIProvider(),
     }
 
