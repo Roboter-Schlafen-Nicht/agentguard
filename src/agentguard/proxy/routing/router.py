@@ -119,17 +119,18 @@ class Router:
                     reason=reason,
                 )
                 logger.info(
-                    "routing_decision tier=%s model=%s reason=%s tokens=%d messages=%d",
+                    "routing_decision tier=%s model=%s reason=%s tokens=%d messages=%d difficulty=%d",
                     tier.name,
                     tier.model,
                     reason,
                     token_estimate,
                     message_count,
+                    difficulty,
                 )
                 return decision
 
         # No tier matched — fall back to default
-        return self._resolve_default(token_estimate, message_count)
+        return self._resolve_default(token_estimate, message_count, difficulty)
 
     def _evaluate_tier(
         self,
@@ -193,6 +194,7 @@ class Router:
         self,
         token_estimate: int,
         message_count: int,
+        difficulty: int = 0,
     ) -> RoutingDecision:
         """Resolve the default tier when no tiers matched.
 
@@ -208,11 +210,12 @@ class Router:
         for tier in self._config.tiers:
             if tier.name == default_name:
                 logger.info(
-                    "routing_default tier=%s model=%s tokens=%d messages=%d",
+                    "routing_default tier=%s model=%s tokens=%d messages=%d difficulty=%d",
                     tier.name,
                     tier.model,
                     token_estimate,
                     message_count,
+                    difficulty,
                 )
                 return RoutingDecision(
                     tier_name=tier.name,
@@ -226,11 +229,12 @@ class Router:
             last = self._config.tiers[-1]
             logger.warning(
                 "routing_default_not_found default_tier=%s "
-                "fallback_tier=%s tokens=%d messages=%d",
+                "fallback_tier=%s tokens=%d messages=%d difficulty=%d",
                 default_name,
                 last.name,
                 token_estimate,
                 message_count,
+                difficulty,
             )
             return RoutingDecision(
                 tier_name=last.name,
@@ -241,10 +245,11 @@ class Router:
 
         # No tiers at all — passthrough
         logger.warning(
-            "routing_no_tiers default_tier=%s tokens=%d messages=%d",
+            "routing_no_tiers default_tier=%s tokens=%d messages=%d difficulty=%d",
             default_name,
             token_estimate,
             message_count,
+            difficulty,
         )
         return RoutingDecision(
             tier_name="passthrough",
