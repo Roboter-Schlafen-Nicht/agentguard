@@ -186,10 +186,27 @@ class GuardMiddleware:
         all_content = " ".join(content_parts)
         token_est = estimate_tokens(all_content)
 
-        # Classify difficulty if classifier is configured
+        # Classify difficulty if classifier is configured.
+        # Use only the last N messages (classifier_window) to focus
+        # on the current task rather than the full conversation history.
         difficulty = 0
         if self._classifier is not None:
-            difficulty = await self._classifier.classify(all_content)
+            window = self.config.routing.classifier_window  # type: ignore[union-attr]
+            windowed_messages = messages[-window:] if window > 0 else messages
+            window_parts: list[str] = []
+            for msg in windowed_messages:
+                if isinstance(msg, dict):
+                    content = msg.get("content", "")
+                    if isinstance(content, str):
+                        window_parts.append(content)
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict):
+                                text = block.get("text")
+                                if isinstance(text, str):
+                                    window_parts.append(text)
+            windowed_content = " ".join(window_parts)
+            difficulty = await self._classifier.classify(windowed_content)
 
         # Route the request
         decision = self.router.route(

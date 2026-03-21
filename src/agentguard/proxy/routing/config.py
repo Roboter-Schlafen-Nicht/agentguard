@@ -58,6 +58,12 @@ class RoutingConfig:
             Should match a tier name in the tiers list.
         log_dir: Directory for routing log files.  Set via
             ``--routing-log-dir``.  Empty string disables file logging.
+        classifier_url: URL of the difficulty classification service.
+            Empty string disables classification (difficulty=0).
+        classifier_window: Number of recent messages to send to the
+            classifier.  Only the last N messages are classified,
+            keeping classifier input small and focused on the current
+            task.  Defaults to 5.
     """
 
     enabled: bool = False
@@ -65,6 +71,7 @@ class RoutingConfig:
     default_tier: str = "default"
     log_dir: str = ""
     classifier_url: str = ""
+    classifier_window: int = 5
 
 
 def load_routing_config(path: Path | str) -> RoutingConfig:
@@ -137,6 +144,7 @@ def _parse_routing_config(data: dict[str, Any]) -> RoutingConfig:
         tiers=tiers,
         default_tier=str(default_tier),
         classifier_url=str(data.get("classifier_url", "")),
+        classifier_window=int(data.get("classifier_window", 5)),
     )
 
 

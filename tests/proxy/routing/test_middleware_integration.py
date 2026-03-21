@@ -239,7 +239,7 @@ class TestMiddlewareNullModelPassthrough:
                 ModelTier(
                     name="passthrough",
                     max_tokens=10000,
-                    max_difficulty=1,
+                    # No max_difficulty — not dependent on classifier
                 ),
                 ModelTier(name="premium", model="claude-opus-4"),
             ],
@@ -281,12 +281,12 @@ class TestMiddlewareNullModelPassthrough:
                 ModelTier(
                     name="fast",
                     max_tokens=10000,
-                    max_difficulty=1,
+                    # No max_difficulty — not dependent on classifier
                 ),
                 ModelTier(
                     name="standard",
                     max_tokens=40000,
-                    max_difficulty=2,
+                    # No max_difficulty — not dependent on classifier
                 ),
                 ModelTier(name="premium"),
             ],
@@ -366,7 +366,12 @@ class TestMiddlewareClassifierWiring:
 
     @pytest.mark.asyncio
     async def test_apply_routing_without_classifier(self) -> None:
-        """Without classifier_url, difficulty defaults to 0 (skip)."""
+        """Without classifier_url, difficulty defaults to 0 (fail-closed).
+
+        When no classifier is configured, difficulty=0 causes tiers
+        with max_difficulty to be rejected.  The request falls through
+        to the next tier without a difficulty constraint.
+        """
         from agentguard.proxy.config import ProxyConfig
         from agentguard.proxy.middleware import GuardMiddleware
         from agentguard.proxy.routing.config import ModelTier, RoutingConfig
@@ -399,14 +404,20 @@ class TestMiddlewareClassifierWiring:
             }
         ).encode()
 
-        # Without classifier, difficulty=0, so max_difficulty check
-        # is skipped — fast tier should match
+        # Without classifier, difficulty=0, so max_difficulty
+        # constraint rejects fast tier → falls through to premium
         _new_body, decision = await mw._apply_routing(body)
-        assert decision.tier_name == "fast"
+        assert decision.tier_name == "premium"
 
     @pytest.mark.asyncio
-    async def test_classifier_error_falls_open(self) -> None:
-        """Classifier error returns difficulty=0, routing proceeds."""
+    async def test_classifier_error_falls_to_premium(self) -> None:
+        """Classifier error returns difficulty=0, tier with max_difficulty rejected.
+
+        When the classifier fails (returns 0), tiers with max_difficulty
+        constraints are rejected.  The request falls through to the
+        premium tier — the safe direction for cost (overspend on quality
+        rather than underspend on capability).
+        """
         from unittest.mock import AsyncMock, patch
 
         from agentguard.proxy.config import ProxyConfig
@@ -446,8 +457,8 @@ class TestMiddlewareClassifierWiring:
             mock_classifier.classify = AsyncMock(return_value=0)
             _new_body, decision = await mw._apply_routing(body)
 
-        # difficulty=0 skips the check → fast tier matches
-        assert decision.tier_name == "fast"
+        # difficulty=0 rejects fast tier → premium
+        assert decision.tier_name == "premium"
 
     @pytest.mark.asyncio
     async def test_complex_request_routes_to_premium(self) -> None:
@@ -543,3 +554,200 @@ class TestMiddlewareClassifierWiring:
         mw = GuardMiddleware(config)
 
         assert mw._classifier is None
+
+
+class TestClassifierWindowing:
+    """Tests for last-N-messages windowing sent to the classifier."""
+
+    @pytest.mark.asyncio
+    async def test_classifier_receives_only_last_n_messages(self) -> None:
+        """Classifier receives content from only the last N messages.
+
+        With classifier_window=2, a 5-message conversation should
+        only pass the last 2 messages' content to the classifier.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            classifier_window=2,
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "old message 1"},
+                    {"role": "assistant", "content": "old reply 1"},
+                    {"role": "user", "content": "old message 2"},
+                    {"role": "assistant", "content": "old reply 2"},
+                    {"role": "user", "content": "latest question"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            await mw._apply_routing(body)
+
+        # Classifier should have been called with only the last 2
+        # messages' content, not all 5
+        call_args = mock_classifier.classify.call_args
+        classified_text = call_args[0][0]
+        assert "old message 1" not in classified_text
+        assert "old reply 1" not in classified_text
+        assert "old message 2" not in classified_text
+        assert "old reply 2" in classified_text
+        assert "latest question" in classified_text
+
+    @pytest.mark.asyncio
+    async def test_classifier_window_with_fewer_messages(self) -> None:
+        """When conversation has fewer messages than window, use all."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            classifier_window=10,  # Window larger than message count
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "hello"},
+                    {"role": "assistant", "content": "hi there"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            await mw._apply_routing(body)
+
+        classified_text = mock_classifier.classify.call_args[0][0]
+        # Both messages should be included (fewer than window)
+        assert "hello" in classified_text
+        assert "hi there" in classified_text
+
+    @pytest.mark.asyncio
+    async def test_router_still_gets_full_content(self) -> None:
+        """Router receives ALL content for token estimation and patterns.
+
+        The classifier window only limits what the classifier sees.
+        The router still gets the full content for token estimation,
+        pattern matching, and message count.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            classifier_window=1,  # Only classify last message
+            tiers=[
+                ModelTier(
+                    name="pattern-match",
+                    model="claude-opus-4.6",
+                    patterns=["architect"],
+                ),
+                ModelTier(name="default", model="claude-haiku-4.5"),
+            ],
+            default_tier="default",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "Help me architect a system"},
+                    {"role": "assistant", "content": "Sure, here is the plan"},
+                    {"role": "user", "content": "Looks good"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            _, decision = await mw._apply_routing(body)
+
+        # Pattern "architect" is in message 1 (outside classifier window)
+        # but the router sees ALL content, so pattern match should work
+        assert decision.tier_name == "pattern-match"
+
+    @pytest.mark.asyncio
+    async def test_default_classifier_window_is_five(self) -> None:
+        """Default classifier_window is 5 — classifier sees last 5 messages."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            # Default classifier_window=5
+            tiers=[
+                ModelTier(name="fast", model="claude-haiku-4.5", max_difficulty=2),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        messages = [{"role": "user", "content": f"message {i}"} for i in range(10)]
+        body = json.dumps({"model": "claude-opus-4.6", "messages": messages}).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            await mw._apply_routing(body)
+
+        classified_text = mock_classifier.classify.call_args[0][0]
+        # Messages 0-4 should NOT be in classifier input
+        assert "message 0" not in classified_text
+        assert "message 4" not in classified_text
+        # Messages 5-9 should be in classifier input (last 5)
+        assert "message 5" in classified_text
+        assert "message 9" in classified_text
