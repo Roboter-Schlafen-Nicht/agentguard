@@ -516,8 +516,49 @@ class TestRouterDifficultyMatching:
         assert decision.tier_name == "premium"
         assert decision.model == "claude-opus-4"
 
-    def test_difficulty_zero_skips_constraint(self) -> None:
-        """difficulty=0 (unknown) skips the difficulty constraint."""
+    def test_difficulty_zero_rejects_tier_with_max_difficulty(self) -> None:
+        """difficulty=0 (unknown) does NOT match a tier with max_difficulty.
+
+        When the classifier fails or is unavailable (difficulty=0),
+        tiers that rely on difficulty constraints must be skipped.
+        This ensures complex requests fall through to the premium
+        tier rather than being routed to a cheap model by accident.
+        """
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+        from agentguard.proxy.routing.router import Router
+
+        config = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-haiku-4.5",
+                    max_difficulty=2,
+                ),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        router = Router(config)
+
+        # difficulty=0 (unknown/classifier failure) — fast tier has
+        # max_difficulty so it must NOT match; falls through to premium
+        decision = router.route(
+            token_estimate=1000,
+            message_count=5,
+            content="",
+            difficulty=0,
+        )
+        assert decision.tier_name == "premium"
+        assert decision.model == "claude-opus-4.6"
+
+    def test_difficulty_zero_matches_tier_without_max_difficulty(self) -> None:
+        """difficulty=0 still matches tiers that have no max_difficulty.
+
+        Tiers without a difficulty constraint are unaffected by
+        unknown difficulty — they match based on their other
+        constraints (tokens, messages, patterns).
+        """
         from agentguard.proxy.routing.config import ModelTier, RoutingConfig
         from agentguard.proxy.routing.router import Router
 
@@ -527,22 +568,25 @@ class TestRouterDifficultyMatching:
                 ModelTier(
                     name="fast",
                     model="claude-sonnet-4",
-                    max_difficulty=1,
+                    max_tokens=10000,
+                    # No max_difficulty — not dependent on classifier
                 ),
-                ModelTier(name="premium", model="claude-opus-4"),
+                ModelTier(name="premium", model="claude-opus-4.6"),
             ],
             default_tier="premium",
         )
         router = Router(config)
 
-        # difficulty=0 (unknown) — max_difficulty constraint is skipped
+        # difficulty=0 — fast tier has no max_difficulty constraint,
+        # so it matches based on tokens alone
         decision = router.route(
-            token_estimate=1000,
+            token_estimate=5000,
             message_count=5,
             content="",
             difficulty=0,
         )
         assert decision.tier_name == "fast"
+        assert decision.model == "claude-sonnet-4"
 
     def test_difficulty_combined_with_tokens(self) -> None:
         """Difficulty constraint works alongside token constraint (AND logic)."""
@@ -592,7 +636,12 @@ class TestRouterDifficultyMatching:
         assert decision.tier_name == "premium"
 
     def test_difficulty_default_is_zero(self) -> None:
-        """Calling route() without difficulty defaults to 0 (skip)."""
+        """Calling route() without difficulty defaults to 0.
+
+        When difficulty defaults to 0, tiers with max_difficulty are
+        rejected (fail-closed on difficulty), so the request falls
+        through to the next tier without a difficulty constraint.
+        """
         from agentguard.proxy.routing.config import ModelTier, RoutingConfig
         from agentguard.proxy.routing.router import Router
 
@@ -610,13 +659,14 @@ class TestRouterDifficultyMatching:
         )
         router = Router(config)
 
-        # No difficulty argument — defaults to 0, difficulty check skipped
+        # No difficulty argument — defaults to 0, tier with
+        # max_difficulty is rejected, falls through to premium
         decision = router.route(
             token_estimate=1000,
             message_count=5,
             content="",
         )
-        assert decision.tier_name == "fast"
+        assert decision.tier_name == "premium"
 
     def test_three_tier_difficulty_routing(self) -> None:
         """Three-tier setup: simple→fast, medium→standard, complex→premium."""

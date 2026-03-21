@@ -171,8 +171,15 @@ class Router:
                 return False, ""
             reasons.append(f"messages({message_count}) <= {tier.max_messages}")
 
-        # Check difficulty constraint (skip when difficulty=0 / unknown)
-        if tier.max_difficulty is not None and difficulty > 0:
+        # Check difficulty constraint
+        # When difficulty=0 (unknown / classifier failure) and the
+        # tier has a max_difficulty constraint, the tier is REJECTED.
+        # This is fail-closed on the difficulty dimension: we route
+        # to the more capable (and expensive) model rather than risk
+        # sending a complex request to a cheap model.
+        if tier.max_difficulty is not None:
+            if difficulty == 0:
+                return False, ""
             if difficulty > tier.max_difficulty:
                 return False, ""
             reasons.append(f"difficulty({difficulty}) <= {tier.max_difficulty}")

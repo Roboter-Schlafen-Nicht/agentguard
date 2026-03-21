@@ -284,3 +284,54 @@ tiers:
 
         config = load_routing_config(config_file)
         assert config.classifier_url == "http://localhost:11435"
+
+
+class TestRoutingConfigClassifierWindow:
+    """Tests for classifier_window field on RoutingConfig."""
+
+    def test_classifier_window_default_is_five(self) -> None:
+        """classifier_window defaults to 5."""
+        from agentguard.proxy.routing.config import RoutingConfig
+
+        config = RoutingConfig()
+        assert config.classifier_window == 5
+
+    def test_classifier_window_can_be_set(self) -> None:
+        """classifier_window can be set to a custom value."""
+        from agentguard.proxy.routing.config import RoutingConfig
+
+        config = RoutingConfig(classifier_window=10)
+        assert config.classifier_window == 10
+
+    def test_classifier_window_loaded_from_yaml(self, tmp_path) -> None:
+        """classifier_window is loaded from YAML config."""
+        from agentguard.proxy.routing.config import load_routing_config
+
+        yaml_content = """\
+enabled: true
+classifier_window: 3
+tiers:
+  - name: default
+    model: claude-sonnet-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_routing_config(config_file)
+        assert config.classifier_window == 3
+
+    def test_classifier_window_default_when_not_in_yaml(self, tmp_path) -> None:
+        """classifier_window defaults to 5 when not in YAML."""
+        from agentguard.proxy.routing.config import load_routing_config
+
+        yaml_content = """\
+enabled: true
+tiers:
+  - name: default
+    model: claude-sonnet-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_routing_config(config_file)
+        assert config.classifier_window == 5
