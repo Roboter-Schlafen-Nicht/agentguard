@@ -224,6 +224,39 @@ def _build_parser() -> argparse.ArgumentParser:
         help="List files that would be deleted without deleting.",
     )
 
+    # audit export
+    export_parser = audit_sub.add_parser(
+        "export",
+        help="Export audit log entries to JSON, CSV, or SQLite.",
+    )
+    export_parser.add_argument(
+        "directory",
+        help="Directory containing audit JSONL files.",
+    )
+    export_parser.add_argument(
+        "--output",
+        required=True,
+        help="Output file path.",
+    )
+    export_parser.add_argument(
+        "--format",
+        choices=["json", "csv", "sqlite"],
+        default="json",
+        help="Export format (default: json).",
+    )
+    export_parser.add_argument(
+        "--action",
+        help="Filter by action type.",
+    )
+    export_parser.add_argument(
+        "--actor",
+        help="Filter by actor.",
+    )
+    export_parser.add_argument(
+        "--result",
+        help="Filter by result.",
+    )
+
     # --- serve ---
     serve_parser = subparsers.add_parser(
         "serve", help="Start the AgentGuard MCP server."
@@ -1366,6 +1399,49 @@ def _cmd_audit_purge(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_audit_export(args: argparse.Namespace) -> int:
+    """Export audit log entries to JSON, CSV, or SQLite."""
+    from agentguard.audit.export import export_csv, export_json, export_sqlite
+    from agentguard.audit.log import AuditLog
+
+    directory = Path(args.directory)
+    if not directory.is_dir():
+        print(f"Error: Audit directory not found: {args.directory}", file=sys.stderr)
+        return 1
+
+    logs = AuditLog.load_directory(directory)
+
+    # Collect all entries from all logs
+    all_entries: list[AuditEntry] = []
+    for log in logs:
+        all_entries.extend(log.entries)
+
+    # Apply filters
+    action_filter = getattr(args, "action", None)
+    actor_filter = getattr(args, "actor", None)
+    result_filter = getattr(args, "result", None)
+
+    if action_filter is not None:
+        all_entries = [e for e in all_entries if e.action == action_filter]
+    if actor_filter is not None:
+        all_entries = [e for e in all_entries if e.actor == actor_filter]
+    if result_filter is not None:
+        all_entries = [e for e in all_entries if e.result == result_filter]
+
+    output_path = Path(args.output)
+    fmt = getattr(args, "format", "json")
+
+    if fmt == "csv":
+        count = export_csv(all_entries, output_path)
+    elif fmt == "sqlite":
+        count = export_sqlite(all_entries, output_path)
+    else:
+        count = export_json(all_entries, output_path)
+
+    print(f"Exported {count} entries to {output_path}")
+    return 0
+
+
 def _sandbox_load_guard(args: argparse.Namespace) -> Guard:
     """Build a Guard from sandbox CLI args."""
     from agentguard.policies.builtins import load_all_builtins
@@ -1772,6 +1848,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _cmd_audit_report(args)
         if args.audit_command == "purge":
             return _cmd_audit_purge(args)
+        if args.audit_command == "export":
+            return _cmd_audit_export(args)
         if _parsers.audit is not None:
             _parsers.audit.print_help()
         return 1
