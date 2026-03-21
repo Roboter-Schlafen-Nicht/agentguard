@@ -307,7 +307,7 @@ class TestMiddlewareNullModelPassthrough:
             }
         ).encode()
 
-        new_body, decision = await mw._apply_routing(body)
+        new_body, _decision = await mw._apply_routing(body)
         parsed = json.loads(new_body)
 
         # Model should never be rewritten when all tiers have model=None
@@ -357,7 +357,7 @@ class TestMiddlewareClassifierWiring:
         # Mock the classifier to return Simple (1)
         with patch.object(mw, "_classifier", create=True) as mock_classifier:
             mock_classifier.classify = AsyncMock(return_value=1)
-            new_body, decision = await mw._apply_routing(body)
+            _new_body, decision = await mw._apply_routing(body)
 
         # Classifier was called with the content
         mock_classifier.classify.assert_awaited_once()
@@ -401,7 +401,7 @@ class TestMiddlewareClassifierWiring:
 
         # Without classifier, difficulty=0, so max_difficulty check
         # is skipped — fast tier should match
-        new_body, decision = await mw._apply_routing(body)
+        _new_body, decision = await mw._apply_routing(body)
         assert decision.tier_name == "fast"
 
     @pytest.mark.asyncio
@@ -444,7 +444,7 @@ class TestMiddlewareClassifierWiring:
         # Classifier returns 0 (fail-open)
         with patch.object(mw, "_classifier", create=True) as mock_classifier:
             mock_classifier.classify = AsyncMock(return_value=0)
-            new_body, decision = await mw._apply_routing(body)
+            _new_body, decision = await mw._apply_routing(body)
 
         # difficulty=0 skips the check → fast tier matches
         assert decision.tier_name == "fast"
@@ -492,7 +492,7 @@ class TestMiddlewareClassifierWiring:
         # Classifier returns Complex (3)
         with patch.object(mw, "_classifier", create=True) as mock_classifier:
             mock_classifier.classify = AsyncMock(return_value=3)
-            new_body, decision = await mw._apply_routing(body)
+            _new_body, decision = await mw._apply_routing(body)
 
         # difficulty=3 > max_difficulty=1 → fast rejected → premium
         assert decision.tier_name == "premium"
