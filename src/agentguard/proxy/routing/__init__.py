@@ -5,6 +5,7 @@ routing simple requests to fast/cheap models and complex requests
 to premium models.
 """
 
+from agentguard.proxy.routing.classifier import DifficultyClassifier
 from agentguard.proxy.routing.config import (
     ModelTier,
     RoutingConfig,
@@ -14,6 +15,7 @@ from agentguard.proxy.routing.config import (
 from agentguard.proxy.routing.router import Router, RoutingDecision
 
 __all__ = [
+    "DifficultyClassifier",
     "ModelTier",
     "Router",
     "RoutingConfig",

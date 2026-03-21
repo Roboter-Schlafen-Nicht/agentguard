@@ -72,6 +72,7 @@ class Router:
         token_estimate: int,
         message_count: int,
         content: str,
+        difficulty: int = 0,
     ) -> RoutingDecision:
         """Route a request to a model tier.
 
@@ -80,6 +81,9 @@ class Router:
             message_count: Number of messages in the conversation.
             content: Concatenated text content of the request
                 (used for pattern matching).
+            difficulty: Difficulty level from the classifier (1-3),
+                or 0 if unknown/unavailable.  0 skips difficulty
+                constraints.
 
         Returns:
             A RoutingDecision specifying the tier, model, and
@@ -101,7 +105,11 @@ class Router:
         # Evaluate tiers in order
         for tier in self._config.tiers:
             matched, reason = self._evaluate_tier(
-                tier.name, token_estimate, message_count, content
+                tier.name,
+                token_estimate,
+                message_count,
+                content,
+                difficulty,
             )
             if matched:
                 decision = RoutingDecision(
@@ -111,17 +119,19 @@ class Router:
                     reason=reason,
                 )
                 logger.info(
-                    "routing_decision tier=%s model=%s reason=%s tokens=%d messages=%d",
+                    "routing_decision tier=%s model=%s reason=%s"
+                    " tokens=%d messages=%d difficulty=%d",
                     tier.name,
                     tier.model,
                     reason,
                     token_estimate,
                     message_count,
+                    difficulty,
                 )
                 return decision
 
         # No tier matched — fall back to default
-        return self._resolve_default(token_estimate, message_count)
+        return self._resolve_default(token_estimate, message_count, difficulty)
 
     def _evaluate_tier(
         self,
@@ -129,11 +139,19 @@ class Router:
         token_estimate: int,
         message_count: int,
         content: str,
+        difficulty: int = 0,
     ) -> tuple[bool, str]:
         """Evaluate whether a request matches a specific tier.
 
         All constraints on the tier must be satisfied for a match.
         A tier with no constraints matches unconditionally.
+
+        Args:
+            tier_name: Name of the tier to evaluate.
+            token_estimate: Estimated token count.
+            message_count: Number of messages.
+            content: Concatenated text content.
+            difficulty: Difficulty level (1-3) or 0 to skip.
 
         Returns:
             Tuple of (matched, reason_string).
@@ -153,6 +171,12 @@ class Router:
                 return False, ""
             reasons.append(f"messages({message_count}) <= {tier.max_messages}")
 
+        # Check difficulty constraint (skip when difficulty=0 / unknown)
+        if tier.max_difficulty is not None and difficulty > 0:
+            if difficulty > tier.max_difficulty:
+                return False, ""
+            reasons.append(f"difficulty({difficulty}) <= {tier.max_difficulty}")
+
         # Check pattern constraint
         compiled = self._compiled_patterns.get(tier_name, [])
         if compiled:
@@ -171,6 +195,7 @@ class Router:
         self,
         token_estimate: int,
         message_count: int,
+        difficulty: int = 0,
     ) -> RoutingDecision:
         """Resolve the default tier when no tiers matched.
 
@@ -186,11 +211,13 @@ class Router:
         for tier in self._config.tiers:
             if tier.name == default_name:
                 logger.info(
-                    "routing_default tier=%s model=%s tokens=%d messages=%d",
+                    "routing_default tier=%s model=%s"
+                    " tokens=%d messages=%d difficulty=%d",
                     tier.name,
                     tier.model,
                     token_estimate,
                     message_count,
+                    difficulty,
                 )
                 return RoutingDecision(
                     tier_name=tier.name,
@@ -204,11 +231,12 @@ class Router:
             last = self._config.tiers[-1]
             logger.warning(
                 "routing_default_not_found default_tier=%s "
-                "fallback_tier=%s tokens=%d messages=%d",
+                "fallback_tier=%s tokens=%d messages=%d difficulty=%d",
                 default_name,
                 last.name,
                 token_estimate,
                 message_count,
+                difficulty,
             )
             return RoutingDecision(
                 tier_name=last.name,
@@ -219,10 +247,11 @@ class Router:
 
         # No tiers at all — passthrough
         logger.warning(
-            "routing_no_tiers default_tier=%s tokens=%d messages=%d",
+            "routing_no_tiers default_tier=%s tokens=%d messages=%d difficulty=%d",
             default_name,
             token_estimate,
             message_count,
+            difficulty,
         )
         return RoutingDecision(
             tier_name="passthrough",

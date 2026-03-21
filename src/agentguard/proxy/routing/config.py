@@ -39,6 +39,7 @@ class ModelTier:
     upstream_url: str | None = None
     max_tokens: int | None = None
     max_messages: int | None = None
+    max_difficulty: int | None = None
     patterns: list[str] = field(default_factory=list)
 
 
@@ -61,6 +62,7 @@ class RoutingConfig:
     tiers: list[ModelTier] = field(default_factory=list)
     default_tier: str = "default"
     log_dir: str = ""
+    classifier_url: str = ""
 
 
 def load_routing_config(path: Path | str) -> RoutingConfig:
@@ -132,6 +134,7 @@ def _parse_routing_config(data: dict[str, Any]) -> RoutingConfig:
         enabled=bool(enabled),
         tiers=tiers,
         default_tier=str(default_tier),
+        classifier_url=str(data.get("classifier_url", "")),
     )
 
 
@@ -168,6 +171,7 @@ def _parse_model_tier(data: dict[str, Any], index: int) -> ModelTier:
         upstream_url=data.get("upstream_url"),
         max_tokens=data.get("max_tokens"),
         max_messages=data.get("max_messages"),
+        max_difficulty=data.get("max_difficulty"),
         patterns=[str(p) for p in patterns],
     )
 
