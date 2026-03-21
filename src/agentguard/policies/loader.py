@@ -69,10 +69,19 @@ def load_policy_from_yaml(path: str | Path) -> Policy:
 
 
 def _parse_policy(data: dict[str, Any]) -> Policy:
-    """Parse and validate a policy dict."""
+    """Parse and validate a policy dict.
+
+    If the policy has a ``type`` field, dispatches to the
+    appropriate specialized parser. Otherwise parses as a
+    standard deny-rule policy.
+    """
     if "name" not in data:
         msg = "Policy must have a 'name' field"
         raise ValueError(msg)
+
+    policy_type = data.get("type")
+    if policy_type == "domain_allowlist":
+        return _parse_domain_allowlist(data)
 
     if "rules" not in data or not data["rules"]:
         msg = "Policy must have a non-empty 'rules' field"
@@ -87,6 +96,34 @@ def _parse_policy(data: dict[str, Any]) -> Policy:
         rules=rules,
         version=version,
         changelog=changelog,
+    )
+
+
+def _parse_domain_allowlist(data: dict[str, Any]) -> Policy:
+    """Parse a domain_allowlist policy from a YAML dict.
+
+    Expected fields:
+    - name (required)
+    - action (optional, default "web_request")
+    - domains (optional, list of domain strings)
+    - presets (optional, list of preset names)
+    - description (optional)
+
+    At least one of domains or presets must be provided.
+    """
+    from agentguard.policies.domain_allowlist import DomainAllowlist
+
+    domains = data.get("domains")
+    presets = data.get("presets")
+    action_kind = data.get("action", "web_request")
+    description = data.get("description")
+
+    return DomainAllowlist(
+        name=data["name"],
+        domains=domains,
+        presets=presets,
+        action_kind=action_kind,
+        description=description,
     )
 
 
