@@ -1673,13 +1673,11 @@ def _cmd_report(args: argparse.Namespace) -> int:
     if framework == "eu-ai-act":
         from agentguard.compliance.eu_ai_act import EUAIActReportGenerator
 
-        generator = EUAIActReportGenerator()
+        report = EUAIActReportGenerator().generate(log)
     else:  # iso-42001
         from agentguard.compliance.iso_42001 import ISO42001ReportGenerator
 
-        generator = ISO42001ReportGenerator()
-
-    report = generator.generate(log)
+        report = ISO42001ReportGenerator().generate(log)
 
     if args.format == "json":
         output = render_json(report, output=args.output)
