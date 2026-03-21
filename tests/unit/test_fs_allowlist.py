@@ -15,6 +15,8 @@ Covers:
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from agentguard.policies.fs_allowlist import (
@@ -51,6 +53,11 @@ class TestFilesystemAllowlistCreation:
     def test_unknown_preset_raises(self) -> None:
         with pytest.raises(ValueError, match="unknown_preset"):
             FilesystemAllowlist(name="test", presets=["unknown_preset"])
+
+    def test_bare_glob_pattern_raises(self) -> None:
+        """Bare glob patterns without directory anchor are rejected."""
+        with pytest.raises(ValueError, match=r"Bare glob pattern.*not allowed"):
+            FilesystemAllowlist(name="test", allowed_paths=["*.py"])
 
 
 # --- Path matching ---
@@ -102,6 +109,15 @@ class TestPathMatching:
         assert al.evaluate_path("/home/user/project/main.py").allowed is True
         assert al.evaluate_path("/home/user/project/test.py").allowed is True
         assert al.evaluate_path("/home/user/project/data.csv").denied is True
+
+    def test_anchored_glob_does_not_match_other_dirs(self) -> None:
+        """'/home/user/project/*.py' must not match '/etc/evil.py'."""
+        al = FilesystemAllowlist(
+            name="test",
+            allowed_paths=["/home/user/project/*.py"],
+        )
+        assert al.evaluate_path("/etc/evil.py").denied is True
+        assert al.evaluate_path("/root/.ssh/keys.py").denied is True
 
     def test_recursive_glob(self) -> None:
         al = FilesystemAllowlist(
@@ -156,6 +172,14 @@ class TestPresets:
 
     def test_project_preset_exists(self) -> None:
         assert "project" in FS_PRESETS
+
+    def test_project_preset_allows_cwd_files(self) -> None:
+        """Project preset resolves ./ to CWD and allows files under it."""
+        al = FilesystemAllowlist(name="test", presets=["project"])
+        cwd = os.getcwd()
+        assert al.evaluate_path(cwd + "/file.py").allowed is True
+        assert al.evaluate_path(cwd + "/src/main.py").allowed is True
+        assert al.evaluate_path("/etc/passwd").denied is True
 
     def test_preset_paths_are_lists(self) -> None:
         for name, paths in FS_PRESETS.items():

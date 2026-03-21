@@ -27,7 +27,7 @@ YAML format::
     paths:
       - /home/user/project/
       - /tmp/
-      - "*.py"
+      - /home/user/project/*.py
     presets:
       - temp
 """
@@ -35,6 +35,7 @@ YAML format::
 from __future__ import annotations
 
 import logging
+import os
 from fnmatch import fnmatch
 from pathlib import PurePosixPath
 
@@ -72,7 +73,8 @@ class FilesystemAllowlist(Policy):
     - **Directory prefixes**: ``/home/user/project/`` (trailing
       slash) matches all files under that directory.
     - **Glob patterns**: ``/home/user/project/*.py`` matches via
-      fnmatch.
+      fnmatch. Patterns must be anchored (contain at least one
+      ``/``) to prevent accidental broad matching.
 
     All paths are normalized (resolving ``..`` and ``.``) before
     matching to prevent path traversal.
@@ -123,15 +125,28 @@ class FilesystemAllowlist(Policy):
         self._glob_patterns: list[str] = []
 
         for p in all_paths:
-            if p.endswith("/"):
+            # Resolve relative paths (like ./) to absolute
+            resolved = p
+            if p.startswith("./") or p == ".":
+                cwd = os.getcwd()
+                resolved = cwd + "/" if p in (".", "./") else cwd + "/" + p[2:]
+
+            if resolved.endswith("/"):
                 # Directory prefix
-                self._dir_prefixes.append(p)
-            elif any(c in p for c in ("*", "?", "[", "]")):
-                # Glob pattern
-                self._glob_patterns.append(p)
+                self._dir_prefixes.append(resolved)
+            elif any(c in resolved for c in ("*", "?", "[", "]")):
+                # Glob pattern — must contain '/' to be anchored
+                if "/" not in resolved:
+                    msg = (
+                        f"Bare glob pattern {resolved!r} is not allowed. "
+                        f"Glob patterns must be anchored to a directory "
+                        f"(e.g. '/home/user/project/{resolved}')."
+                    )
+                    raise ValueError(msg)
+                self._glob_patterns.append(resolved)
             else:
                 # Exact path
-                self._exact_paths.add(p)
+                self._exact_paths.add(resolved)
 
         self._action_kind = action_kind
 
