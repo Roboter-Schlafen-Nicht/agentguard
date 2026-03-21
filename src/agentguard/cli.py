@@ -716,16 +716,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "Medium/Complex before routing. Empty string disables."
         ),
     )
-    proxy_parser.add_argument(
-        "--classifier-window",
-        type=int,
-        default=None,
-        help=(
-            "Number of recent messages to send to the difficulty "
-            "classifier. Only the last N messages are classified, "
-            "keeping input small and focused. Default: 5."
-        ),
-    )
 
     return parser
 
@@ -1290,9 +1280,6 @@ def _build_routing_config(
     config = load_routing_config(routing_path)
     config.log_dir = getattr(args, "routing_log_dir", "")
     config.classifier_url = getattr(args, "classifier_url", "")
-    classifier_window = getattr(args, "classifier_window", None)
-    if classifier_window is not None:
-        config.classifier_window = classifier_window
     return config
 
 

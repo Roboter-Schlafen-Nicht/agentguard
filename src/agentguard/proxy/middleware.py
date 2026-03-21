@@ -187,26 +187,16 @@ class GuardMiddleware:
         token_est = estimate_tokens(all_content)
 
         # Classify difficulty if classifier is configured.
-        # Use only the last N messages (classifier_window) to focus
-        # on the current task rather than the full conversation history.
+        # Extract only the last human user message for classification,
+        # skipping tool calls and tool results.  In agentic sessions,
+        # the tail of the conversation is tool_use/tool_result chatter
+        # (code, diffs, CI logs) that the classifier misreads as
+        # Complex.  The actual user intent is in the last real human
+        # message.
         difficulty = 0
         if self._classifier is not None:
-            window = self.config.routing.classifier_window  # type: ignore[union-attr]
-            windowed_messages = messages[-window:] if window > 0 else messages
-            window_parts: list[str] = []
-            for msg in windowed_messages:
-                if isinstance(msg, dict):
-                    content = msg.get("content", "")
-                    if isinstance(content, str):
-                        window_parts.append(content)
-                    elif isinstance(content, list):
-                        for block in content:
-                            if isinstance(block, dict):
-                                text = block.get("text")
-                                if isinstance(text, str):
-                                    window_parts.append(text)
-            windowed_content = " ".join(window_parts)
-            difficulty = await self._classifier.classify(windowed_content)
+            classifier_input = self._extract_last_user_message(messages)
+            difficulty = await self._classifier.classify(classifier_input)
 
         # Route the request
         decision = self.router.route(
@@ -892,6 +882,68 @@ class GuardMiddleware:
                 rotation=self.config.rotation,
                 retention=self.config.retention,
             )
+
+    @staticmethod
+    def _extract_last_user_message(messages: list[Any]) -> str:
+        """Extract the content of the last human user message.
+
+        Walks the messages list in reverse and returns the text of
+        the most recent message that is a real human input — not a
+        tool result or assistant message.
+
+        Detection rules:
+        - OpenAI format: ``role="tool"`` → skip (tool result)
+        - OpenAI format: ``role="assistant"`` → skip
+        - OpenAI format: ``role="system"`` → skip
+        - Anthropic format: ``role="user"`` with content containing
+          ``{type: "tool_result"}`` blocks → skip
+        - ``role="user"`` with string content → real human message
+        - ``role="user"`` with list content containing only
+          ``{type: "text"}`` blocks → real human message
+
+        Args:
+            messages: The messages array from the request body.
+
+        Returns:
+            The text content of the last human message, or empty
+            string if no human message is found.
+        """
+        for msg in reversed(messages):
+            if not isinstance(msg, dict):
+                continue
+
+            role = msg.get("role", "")
+
+            # Skip non-user roles
+            if role != "user":
+                continue
+
+            content = msg.get("content")
+
+            # String content — always a real human message
+            if isinstance(content, str):
+                return content
+
+            # List content — check for tool_result blocks (Anthropic)
+            if isinstance(content, list):
+                has_tool_result = any(
+                    isinstance(block, dict) and block.get("type") == "tool_result"
+                    for block in content
+                )
+                if has_tool_result:
+                    continue  # Skip tool_result messages
+
+                # Extract text from text blocks
+                text_parts: list[str] = []
+                for block in content:
+                    if isinstance(block, dict):
+                        text = block.get("text")
+                        if isinstance(text, str):
+                            text_parts.append(text)
+                if text_parts:
+                    return " ".join(text_parts)
+
+        return ""
 
     @staticmethod
     def _conversation_fingerprint(messages: list[Any]) -> str | None:
