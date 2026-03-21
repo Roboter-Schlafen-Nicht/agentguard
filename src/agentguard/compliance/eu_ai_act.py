@@ -63,6 +63,7 @@ class EUAIActReportGenerator:
             self._assess_art12(audit_log),
             self._assess_art13(audit_log),
             self._assess_art14(audit_log),
+            self._assess_persona_safety(audit_log),
         ]
 
         return ComplianceReport(
@@ -336,6 +337,145 @@ class EUAIActReportGenerator:
         return ReportSection(
             article="Art. 14",
             title="Human Oversight",
+            status=status,
+            findings=findings,
+        )
+
+    def _assess_persona_safety(
+        self,
+        audit_log: AuditLog,
+    ) -> ReportSection:
+        """Assess persona safety and behavioral drift.
+
+        Evaluates whether the AI agent's behavior stays within
+        expected boundaries, using heuristic risk scoring to
+        detect behavioral drift patterns that may indicate the
+        agent is operating outside its intended persona or role.
+
+        Maps to EU AI Act Art. 5 (prohibited practices) and Art. 9
+        (risk management) — ensuring the AI system does not exhibit
+        manipulative, deceptive, or uncontrolled behavior.
+
+        Args:
+            audit_log: The audit log to analyze.
+
+        Returns:
+            A ReportSection with persona safety findings.
+        """
+        from agentguard.audit.risk import (
+            ConversationRiskScorer,
+            RiskLevel,
+        )
+
+        entries = audit_log.entries
+
+        if not entries:
+            return ReportSection(
+                article="Art. 5/9",
+                title="Persona Safety",
+                status=SectionStatus.NOT_ASSESSED,
+                findings=[
+                    Finding(
+                        severity=FindingSeverity.INFO,
+                        article="Art. 5/9",
+                        description=(
+                            "No audit entries available for persona safety assessment."
+                        ),
+                    ),
+                ],
+            )
+
+        scorer = ConversationRiskScorer()
+        risk_score = scorer.score(entries)
+
+        findings: list[Finding] = []
+
+        # Always report the drift probability
+        findings.append(
+            Finding(
+                severity=FindingSeverity.INFO,
+                article="Art. 5/9",
+                description=(
+                    f"Behavioral drift probability: "
+                    f"{risk_score.probability:.2f} "
+                    f"(risk level: {risk_score.level.value})"
+                ),
+                evidence=(
+                    f"Analyzed {len(entries)} audit entries. "
+                    f"Detected {len(risk_score.signals)} risk signal(s)."
+                ),
+            ),
+        )
+
+        # Report individual signals
+        for signal in risk_score.signals:
+            findings.append(
+                Finding(
+                    severity=FindingSeverity.INFO,
+                    article="Art. 5/9",
+                    description=(f"Risk signal: {signal.signal_type.value}"),
+                    evidence=signal.description,
+                ),
+            )
+
+        # Determine status and add severity-appropriate findings
+        if risk_score.level == RiskLevel.CRITICAL:
+            status = SectionStatus.FAIL
+            findings.append(
+                Finding(
+                    severity=FindingSeverity.VIOLATION,
+                    article="Art. 5/9",
+                    description=(
+                        "Critical behavioral drift detected. "
+                        "Agent may be operating outside intended "
+                        "persona boundaries."
+                    ),
+                    evidence=(
+                        f"Drift probability {risk_score.probability:.2f} "
+                        f"exceeds critical threshold (0.75)."
+                    ),
+                ),
+            )
+        elif risk_score.level == RiskLevel.HIGH:
+            status = SectionStatus.FAIL
+            findings.append(
+                Finding(
+                    severity=FindingSeverity.VIOLATION,
+                    article="Art. 5/9",
+                    description=(
+                        "High behavioral drift detected. "
+                        "Agent actions show significant deviation "
+                        "from expected patterns."
+                    ),
+                    evidence=(
+                        f"Drift probability {risk_score.probability:.2f} "
+                        f"exceeds high threshold (0.50)."
+                    ),
+                ),
+            )
+        elif risk_score.level == RiskLevel.MEDIUM:
+            status = SectionStatus.WARN
+            findings.append(
+                Finding(
+                    severity=FindingSeverity.WARNING,
+                    article="Art. 5/9",
+                    description=(
+                        "Moderate behavioral drift detected. "
+                        "Some agent actions deviate from expected "
+                        "patterns."
+                    ),
+                    evidence=(
+                        f"Drift probability {risk_score.probability:.2f} "
+                        f"exceeds medium threshold (0.25)."
+                    ),
+                ),
+            )
+        else:
+            status = SectionStatus.PASS
+
+        return ReportSection(
+            article="Art. 5/9",
+            title="Persona Safety",
             status=status,
             findings=findings,
         )
