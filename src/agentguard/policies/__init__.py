@@ -6,6 +6,7 @@ from agentguard.policies.guard import Guard
 from agentguard.policies.loader import load_policy_from_string, load_policy_from_yaml
 from agentguard.policies.models import (
     Action,
+    ChangelogEntry,
     Condition,
     Context,
     Decision,
@@ -16,6 +17,7 @@ from agentguard.policies.models import (
 
 __all__ = [
     "Action",
+    "ChangelogEntry",
     "Condition",
     "Context",
     "Decision",

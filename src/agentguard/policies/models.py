@@ -1,7 +1,8 @@
-"""Policy data models: Severity, Action, Rule, Decision, Policy, Condition, Context.
+"""Policy data models for the AgentGuard policy engine.
 
-These are the core types used throughout the AgentGuard policy engine.
-All are immutable (frozen dataclasses or enums) for safety.
+Core types: Severity, Action, Rule, Decision, Policy, Condition,
+Context, ChangelogEntry. All are immutable (frozen dataclasses or
+enums) for safety.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import re
-    from datetime import datetime, time
+    from datetime import date, datetime, time
 
 
 class Severity(enum.Enum):
@@ -190,6 +191,21 @@ class Condition:
         return True
 
 
+@dataclass(frozen=True)
+class ChangelogEntry:
+    """A single entry in a policy's changelog.
+
+    Attributes:
+        version: The version this entry describes.
+        description: Human-readable description of what changed.
+        date: Optional date of the change (ISO 8601 format in YAML).
+    """
+
+    version: str
+    description: str
+    date: date | None = None
+
+
 @dataclass
 class Rule:
     """A deny rule within a policy.
@@ -311,12 +327,15 @@ class Decision:
         denied_by: Name of the policy that denied it (if denied).
         reason: Human-readable explanation (if denied).
         severity: Severity of the violated rule (if denied).
+        policy_version: Version of the denying policy (if denied and
+            the policy has a version).
     """
 
     allowed: bool
     denied_by: str | None = None
     reason: str | None = None
     severity: Severity | None = None
+    policy_version: str | None = None
 
     @property
     def denied(self) -> bool:
@@ -330,13 +349,17 @@ class Policy:
 
     Attributes:
         name: Unique identifier for this policy.
-        description: Human-readable description.
         rules: List of deny rules. First match wins.
+        description: Human-readable description.
+        version: Optional semver-like version string.
+        changelog: Optional list of changelog entries (newest first).
     """
 
     name: str
     rules: list[Rule]
     description: str | None = None
+    version: str | None = None
+    changelog: list[ChangelogEntry] | None = None
 
     def evaluate(self, action: Action, context: Context | None = None) -> Decision:
         """Evaluate an action against all rules in this policy.
@@ -355,5 +378,6 @@ class Policy:
                     denied_by=self.name,
                     reason=f"Blocked by policy: {self.name}",
                     severity=rule.severity,
+                    policy_version=self.version,
                 )
         return Decision(allowed=True)

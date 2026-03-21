@@ -10,13 +10,20 @@ the standard library. (PyYAML is a dependency, but it's ubiquitous.)
 from __future__ import annotations
 
 import re
-from datetime import time
+from datetime import date, time
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from agentguard.policies.models import Condition, Policy, Rule, ScanTarget, Severity
+from agentguard.policies.models import (
+    ChangelogEntry,
+    Condition,
+    Policy,
+    Rule,
+    ScanTarget,
+    Severity,
+)
 
 
 def load_policy_from_string(yaml_str: str) -> Policy:
@@ -72,10 +79,14 @@ def _parse_policy(data: dict[str, Any]) -> Policy:
         raise ValueError(msg)
 
     rules = [_parse_rule(r) for r in data["rules"]]
+    version = _parse_version(data.get("version")) if "version" in data else None
+    changelog = _parse_changelog(data["changelog"]) if "changelog" in data else None
     return Policy(
         name=data["name"],
         description=data.get("description"),
         rules=rules,
+        version=version,
+        changelog=changelog,
     )
 
 
@@ -284,3 +295,116 @@ def _parse_weekdays(value: Any) -> list[int] | None:
             msg = f"Invalid weekday value {day!r}. Must be 0 (Mon) through 6 (Sun)"
             raise ValueError(msg)
     return value
+
+
+# Version format: major, major.minor, or major.minor.patch
+_VERSION_RE = re.compile(r"^\d+(\.\d+){0,2}$")
+
+
+def _parse_version(value: Any) -> str:
+    """Parse and validate a version string.
+
+    Accepts semver-like formats: major, major.minor, or
+    major.minor.patch.
+
+    Args:
+        value: Raw version value from YAML.
+
+    Returns:
+        The validated version string.
+
+    Raises:
+        ValueError: If the version string is invalid.
+    """
+    version_str = str(value)
+    if not _VERSION_RE.match(version_str):
+        msg = (
+            f"Invalid version '{version_str}'. "
+            "Expected format: major, major.minor, or major.minor.patch "
+            "(e.g., '1', '1.2', '1.2.3')"
+        )
+        raise ValueError(msg)
+    return version_str
+
+
+def _parse_changelog(data: Any) -> list[ChangelogEntry]:
+    """Parse and validate a changelog list.
+
+    Args:
+        data: Raw changelog list from YAML.
+
+    Returns:
+        A list of validated ChangelogEntry objects.
+
+    Raises:
+        ValueError: If any entry is invalid.
+    """
+    if not isinstance(data, list):
+        msg = "changelog must be a list of entries"
+        raise ValueError(msg)
+
+    entries: list[ChangelogEntry] = []
+    for i, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            msg = f"changelog entry {i} must be a mapping"
+            raise ValueError(msg)
+        entries.append(_parse_changelog_entry(entry, i))
+    return entries
+
+
+def _parse_changelog_entry(data: dict[str, Any], index: int) -> ChangelogEntry:
+    """Parse a single changelog entry.
+
+    Args:
+        data: Raw entry dict from YAML.
+        index: Entry index for error messages.
+
+    Returns:
+        A validated ChangelogEntry.
+
+    Raises:
+        ValueError: If required fields are missing or invalid.
+    """
+    if "version" not in data:
+        msg = f"changelog entry {index} must have a 'version' field"
+        raise ValueError(msg)
+    if "description" not in data:
+        msg = f"changelog entry {index} must have a 'description' field"
+        raise ValueError(msg)
+
+    entry_date: date | None = None
+    if "date" in data:
+        entry_date = _parse_date(data["date"], index)
+
+    return ChangelogEntry(
+        version=str(data["version"]),
+        description=str(data["description"]),
+        date=entry_date,
+    )
+
+
+def _parse_date(value: Any, entry_index: int) -> date:
+    """Parse a date string (YYYY-MM-DD) into a date object.
+
+    Args:
+        value: Raw value from YAML.
+        entry_index: Changelog entry index for error messages.
+
+    Returns:
+        A date object.
+
+    Raises:
+        ValueError: If the value is not a valid YYYY-MM-DD date.
+    """
+    # YAML may auto-parse dates as datetime.date objects
+    if isinstance(value, date):
+        return value
+    value_str = str(value)
+    try:
+        return date.fromisoformat(value_str)
+    except ValueError:
+        msg = (
+            f"Invalid date '{value_str}' in changelog entry {entry_index}. "
+            "Expected YYYY-MM-DD format"
+        )
+        raise ValueError(msg) from None
