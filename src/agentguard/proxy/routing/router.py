@@ -30,12 +30,16 @@ class RoutingDecision:
         upstream_url: Override upstream URL, or None to use the
             default upstream.
         reason: Human-readable explanation of why this tier was chosen.
+        classified_text: The user message text sent to the difficulty
+            classifier, or empty string if classification was skipped.
+            Stored for audit logging and training dataset extraction.
     """
 
     tier_name: str
     model: str | None
     upstream_url: str | None
     reason: str
+    classified_text: str = ""
 
 
 class Router:
