@@ -84,6 +84,8 @@ def _parse_policy(data: dict[str, Any]) -> Policy:
         return _parse_domain_allowlist(data)
     if policy_type == "fs_allowlist":
         return _parse_fs_allowlist(data)
+    if policy_type == "approval":
+        return _parse_approval_policy(data)
 
     if "rules" not in data or not data["rules"]:
         msg = "Policy must have a non-empty 'rules' field"
@@ -153,6 +155,36 @@ def _parse_fs_allowlist(data: dict[str, Any]) -> Policy:
         allowed_paths=allowed_paths,
         presets=presets,
         action_kind=action_kind,
+        description=description,
+    )
+
+
+def _parse_approval_policy(data: dict[str, Any]) -> Policy:
+    """Parse an approval policy from a YAML dict.
+
+    Expected fields:
+    - name (required)
+    - action (required, the action kind requiring approval)
+    - reason (optional, why approval is needed)
+    - timeout (optional, seconds before auto-deny)
+    - description (optional)
+    """
+    from agentguard.policies.approval import ApprovalManager, ApprovalPolicy
+
+    action_kind = data.get("action", "")
+    reason = data.get("reason")
+    description = data.get("description")
+    timeout = data.get("timeout")
+
+    manager = ApprovalManager(
+        default_timeout=float(timeout) if timeout is not None else None,
+    )
+
+    return ApprovalPolicy(
+        name=data["name"],
+        action_kind=action_kind,
+        manager=manager,
+        reason=reason,
         description=description,
     )
 
