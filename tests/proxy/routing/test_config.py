@@ -9,16 +9,24 @@ class TestModelTier:
     """Tests for ModelTier dataclass."""
 
     def test_minimal_tier(self) -> None:
-        """ModelTier requires name and model."""
+        """ModelTier requires only name; model defaults to None."""
+        from agentguard.proxy.routing.config import ModelTier
+
+        tier = ModelTier(name="fast")
+        assert tier.name == "fast"
+        assert tier.model is None
+        assert tier.upstream_url is None
+        assert tier.max_tokens is None
+        assert tier.max_messages is None
+        assert tier.patterns == []
+
+    def test_tier_with_model(self) -> None:
+        """ModelTier with explicit model."""
         from agentguard.proxy.routing.config import ModelTier
 
         tier = ModelTier(name="fast", model="claude-sonnet-4")
         assert tier.name == "fast"
         assert tier.model == "claude-sonnet-4"
-        assert tier.upstream_url is None
-        assert tier.max_tokens is None
-        assert tier.max_messages is None
-        assert tier.patterns == []
 
     def test_full_tier(self) -> None:
         """ModelTier with all fields set."""
@@ -158,20 +166,41 @@ tiers:
         with pytest.raises(ValueError, match="name"):
             load_routing_config(config_file)
 
-    def test_load_tier_missing_model_raises(self, tmp_path) -> None:
-        """Tier without model raises ValueError."""
+    def test_load_tier_without_model_defaults_to_none(self, tmp_path) -> None:
+        """Tier without model field defaults to model=None."""
         from agentguard.proxy.routing.config import load_routing_config
 
         yaml_content = """\
 enabled: true
 tiers:
-  - name: fast
+  - name: passthrough
 """
         config_file = tmp_path / "routing.yaml"
         config_file.write_text(yaml_content)
 
-        with pytest.raises(ValueError, match="model"):
-            load_routing_config(config_file)
+        config = load_routing_config(config_file)
+        assert config.tiers[0].model is None
+
+    def test_load_tier_with_null_model(self, tmp_path) -> None:
+        """Tier with model: null is loaded as model=None."""
+        from agentguard.proxy.routing.config import load_routing_config
+
+        yaml_content = """\
+enabled: true
+tiers:
+  - name: passthrough
+    model: null
+    max_tokens: 10000
+  - name: premium
+    model: claude-opus-4
+"""
+        config_file = tmp_path / "routing.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_routing_config(config_file)
+        assert config.tiers[0].model is None
+        assert config.tiers[0].max_tokens == 10000
+        assert config.tiers[1].model == "claude-opus-4"
 
 
 class TestModelTierDifficulty:

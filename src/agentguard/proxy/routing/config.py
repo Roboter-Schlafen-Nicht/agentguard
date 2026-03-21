@@ -21,6 +21,8 @@ class ModelTier:
         name: Unique identifier for this tier (e.g., "fast", "premium").
         model: Model name to use when this tier matches
             (e.g., "claude-sonnet-4", "claude-opus-4").
+            If None, the original model in the request is preserved
+            (no model override).
         upstream_url: Optional override for the upstream API URL.
             If set, requests matching this tier are sent to this URL
             instead of the default upstream.
@@ -35,7 +37,7 @@ class ModelTier:
     """
 
     name: str
-    model: str
+    model: str | None = None
     upstream_url: str | None = None
     max_tokens: int | None = None
     max_messages: int | None = None
@@ -157,9 +159,6 @@ def _parse_model_tier(data: dict[str, Any], index: int) -> ModelTier:
         raise ValueError(msg)
 
     model = data.get("model")
-    if model is None:
-        msg = f"Tier {index} ('{name}') missing 'model' field"
-        raise ValueError(msg)
 
     patterns = data.get("patterns", [])
     if not isinstance(patterns, list):
@@ -167,7 +166,7 @@ def _parse_model_tier(data: dict[str, Any], index: int) -> ModelTier:
 
     return ModelTier(
         name=str(name),
-        model=str(model),
+        model=str(model) if model is not None else None,
         upstream_url=data.get("upstream_url"),
         max_tokens=data.get("max_tokens"),
         max_messages=data.get("max_messages"),
