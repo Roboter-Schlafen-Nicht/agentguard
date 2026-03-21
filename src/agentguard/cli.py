@@ -569,7 +569,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report_parser = subparsers.add_parser("report", help="Generate compliance reports.")
     report_parser.add_argument(
         "framework",
-        help="Compliance framework (e.g. eu-ai-act).",
+        help="Compliance framework (e.g. eu-ai-act, iso-42001).",
     )
     report_parser.add_argument("file", help="Path to the audit JSONL file.")
     report_parser.add_argument(
@@ -1655,9 +1655,11 @@ def _cmd_report(args: argparse.Namespace) -> int:
     """Generate a compliance report."""
     framework = args.framework.lower()
 
-    if framework != "eu-ai-act":
+    supported_frameworks = ("eu-ai-act", "iso-42001")
+    if framework not in supported_frameworks:
         print(
-            f"Error: Unknown framework '{args.framework}'. Available: eu-ai-act",
+            f"Error: Unknown framework '{args.framework}'. "
+            f"Available: {', '.join(supported_frameworks)}",
             file=sys.stderr,
         )
         return 1
@@ -1666,10 +1668,17 @@ def _cmd_report(args: argparse.Namespace) -> int:
     if log is None:
         return 1
 
-    from agentguard.compliance.eu_ai_act import EUAIActReportGenerator
     from agentguard.compliance.renderers import render_json, render_text
 
-    generator = EUAIActReportGenerator()
+    if framework == "eu-ai-act":
+        from agentguard.compliance.eu_ai_act import EUAIActReportGenerator
+
+        generator = EUAIActReportGenerator()
+    else:  # iso-42001
+        from agentguard.compliance.iso_42001 import ISO42001ReportGenerator
+
+        generator = ISO42001ReportGenerator()
+
     report = generator.generate(log)
 
     if args.format == "json":

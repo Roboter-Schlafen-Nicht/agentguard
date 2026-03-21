@@ -420,6 +420,55 @@ class TestReportCommand:
         assert exit_code != 0
         assert "unknown-framework" in stderr.lower() or "unknown" in stderr.lower()
 
+    def test_report_iso_42001_text(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        exit_code, stdout, _ = _run_cli(
+            "report",
+            "iso-42001",
+            str(log_file),
+            "--session",
+            "test-session-001",
+        )
+        assert exit_code == 0
+        assert "ISO 42001" in stdout
+        assert "Clause" in stdout
+
+    def test_report_iso_42001_json(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        exit_code, stdout, _ = _run_cli(
+            "report",
+            "iso-42001",
+            str(log_file),
+            "--session",
+            "test-session-001",
+            "--format",
+            "json",
+        )
+        assert exit_code == 0
+        data = json.loads(stdout)
+        assert data["framework"] == "ISO 42001"
+        assert "sections" in data
+
+    def test_report_iso_42001_output_to_file(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        output_file = tmp_path / "report.txt"
+        exit_code, _, _ = _run_cli(
+            "report",
+            "iso-42001",
+            str(log_file),
+            "--session",
+            "test-session-001",
+            "--output",
+            str(output_file),
+        )
+        assert exit_code == 0
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "ISO 42001" in content
+
 
 # --- Help / no args ---
 
