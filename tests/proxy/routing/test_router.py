@@ -773,5 +773,5 @@ class TestRouterDuplicateTierNames:
             default_tier="standard",
         )
 
-        with pytest.raises(ValueError, match="Duplicate tier name.*fast"):
+        with pytest.raises(ValueError, match=r"Duplicate tier name.*fast"):
             Router(config)
