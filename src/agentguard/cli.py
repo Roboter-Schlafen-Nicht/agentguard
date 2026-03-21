@@ -569,7 +569,7 @@ def _build_parser() -> argparse.ArgumentParser:
     report_parser = subparsers.add_parser("report", help="Generate compliance reports.")
     report_parser.add_argument(
         "framework",
-        help="Compliance framework (e.g. eu-ai-act, iso-42001).",
+        help="Compliance framework (e.g. eu-ai-act, iso-42001, nist-ai-rmf).",
     )
     report_parser.add_argument("file", help="Path to the audit JSONL file.")
     report_parser.add_argument(
@@ -1655,7 +1655,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
     """Generate a compliance report."""
     framework = args.framework.lower()
 
-    supported_frameworks = ("eu-ai-act", "iso-42001")
+    supported_frameworks = ("eu-ai-act", "iso-42001", "nist-ai-rmf")
     if framework not in supported_frameworks:
         print(
             f"Error: Unknown framework '{args.framework}'. "
@@ -1674,10 +1674,14 @@ def _cmd_report(args: argparse.Namespace) -> int:
         from agentguard.compliance.eu_ai_act import EUAIActReportGenerator
 
         report = EUAIActReportGenerator().generate(log)
-    else:  # iso-42001
+    elif framework == "iso-42001":
         from agentguard.compliance.iso_42001 import ISO42001ReportGenerator
 
         report = ISO42001ReportGenerator().generate(log)
+    else:  # nist-ai-rmf
+        from agentguard.compliance.nist_ai_rmf import NISTAIRMFReportGenerator
+
+        report = NISTAIRMFReportGenerator().generate(log)
 
     if args.format == "json":
         output = render_json(report, output=args.output)

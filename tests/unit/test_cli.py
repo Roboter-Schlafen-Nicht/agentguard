@@ -469,6 +469,55 @@ class TestReportCommand:
         content = output_file.read_text()
         assert "ISO 42001" in content
 
+    def test_report_nist_ai_rmf_text(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        exit_code, stdout, _ = _run_cli(
+            "report",
+            "nist-ai-rmf",
+            str(log_file),
+            "--session",
+            "test-session-001",
+        )
+        assert exit_code == 0
+        assert "NIST AI RMF" in stdout
+        assert "GOVERN" in stdout or "MANAGE" in stdout
+
+    def test_report_nist_ai_rmf_json(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        exit_code, stdout, _ = _run_cli(
+            "report",
+            "nist-ai-rmf",
+            str(log_file),
+            "--session",
+            "test-session-001",
+            "--format",
+            "json",
+        )
+        assert exit_code == 0
+        data = json.loads(stdout)
+        assert data["framework"] == "NIST AI RMF"
+        assert "sections" in data
+
+    def test_report_nist_ai_rmf_output_to_file(self, tmp_path: Path) -> None:
+        log_file = tmp_path / "audit.jsonl"
+        _create_audit_log(log_file, num_entries=5)
+        output_file = tmp_path / "report.txt"
+        exit_code, _, _ = _run_cli(
+            "report",
+            "nist-ai-rmf",
+            str(log_file),
+            "--session",
+            "test-session-001",
+            "--output",
+            str(output_file),
+        )
+        assert exit_code == 0
+        assert output_file.exists()
+        content = output_file.read_text()
+        assert "NIST AI RMF" in content
+
 
 # --- Help / no args ---
 

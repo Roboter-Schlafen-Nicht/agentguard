@@ -1,4 +1,4 @@
-"""Compliance reporting for EU AI Act, ISO 42001, and other regulatory frameworks.
+"""Compliance reporting for EU AI Act, ISO 42001, NIST AI RMF, and other frameworks.
 
 Provides data models, report generators, and renderers for producing
 compliance reports from AgentGuard audit logs.
@@ -13,6 +13,7 @@ from agentguard.compliance.models import (
     ReportSection,
     SectionStatus,
 )
+from agentguard.compliance.nist_ai_rmf import NISTAIRMFReportGenerator
 from agentguard.compliance.renderers import render_json, render_text
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     "Finding",
     "FindingSeverity",
     "ISO42001ReportGenerator",
+    "NISTAIRMFReportGenerator",
     "ReportSection",
     "SectionStatus",
     "render_json",
