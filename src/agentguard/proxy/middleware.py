@@ -194,6 +194,7 @@ class GuardMiddleware:
         # Complex.  The actual user intent is in the last real human
         # message.
         difficulty = 0
+        classifier_input = ""
         if self._classifier is not None:
             classifier_input = self._extract_last_user_message(messages)
             difficulty = await self._classifier.classify(classifier_input)
@@ -205,6 +206,15 @@ class GuardMiddleware:
             content=all_content,
             difficulty=difficulty,
         )
+
+        # Attach classified text to the decision for audit logging.
+        # The router doesn't know about classifier input — only the
+        # middleware extracts it.  We use dataclasses.replace since
+        # RoutingDecision is frozen.
+        if classifier_input:
+            from dataclasses import replace
+
+            decision = replace(decision, classified_text=classifier_input)
 
         # Rewrite model if the decision specifies one
         if decision.model is not None:
@@ -232,6 +242,8 @@ class GuardMiddleware:
             metadata["routing_upstream"] = str(decision.upstream_url)
         if decision.reason:
             metadata["routing_reason"] = str(decision.reason)
+        if decision.classified_text:
+            metadata["classified_text"] = decision.classified_text
         return metadata
 
     async def _compact_request_body(

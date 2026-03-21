@@ -936,3 +936,229 @@ class TestClassifierWindowing:
         # Pattern "architect" is in message 1 (not the last user msg)
         # but the router sees ALL content, so pattern match should work
         assert decision.tier_name == "pattern-match"
+
+
+class TestClassifiedTextInAudit:
+    """Tests for logging classified_text in audit and routing decisions."""
+
+    @pytest.mark.asyncio
+    async def test_routing_decision_includes_classified_text(self) -> None:
+        """RoutingDecision carries the classified text for audit logging."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-haiku-4.5",
+                    max_difficulty=2,
+                ),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "What is 2+2?"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            _, decision = await mw._apply_routing(body)
+
+        assert decision.classified_text == "What is 2+2?"
+
+    @pytest.mark.asyncio
+    async def test_classified_text_empty_without_classifier(self) -> None:
+        """Without a classifier, classified_text is empty string."""
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="",
+            tiers=[
+                ModelTier(name="default", model="claude-sonnet-4"),
+            ],
+            default_tier="default",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "Hello"},
+                ],
+            }
+        ).encode()
+
+        _, decision = await mw._apply_routing(body)
+        assert decision.classified_text == ""
+
+    @pytest.mark.asyncio
+    async def test_classified_text_in_audit_metadata(self) -> None:
+        """classified_text appears in routing audit metadata."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-haiku-4.5",
+                    max_difficulty=2,
+                ),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "Explain quicksort"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            _, decision = await mw._apply_routing(body)
+
+        metadata = mw._routing_audit_metadata(decision)
+        assert metadata["classified_text"] == "Explain quicksort"
+
+    @pytest.mark.asyncio
+    async def test_classified_text_omitted_when_empty(self) -> None:
+        """classified_text is not in audit metadata when empty."""
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            tiers=[
+                ModelTier(name="default", model="claude-sonnet-4"),
+            ],
+            default_tier="default",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {"role": "user", "content": "Hello"},
+                ],
+            }
+        ).encode()
+
+        _, decision = await mw._apply_routing(body)
+        metadata = mw._routing_audit_metadata(decision)
+        assert "classified_text" not in metadata
+
+    @pytest.mark.asyncio
+    async def test_classified_text_from_agentic_conversation(
+        self,
+    ) -> None:
+        """classified_text is the last user message, not tool output."""
+        from unittest.mock import AsyncMock, patch
+
+        from agentguard.proxy.config import ProxyConfig
+        from agentguard.proxy.middleware import GuardMiddleware
+        from agentguard.proxy.routing.config import ModelTier, RoutingConfig
+
+        routing = RoutingConfig(
+            enabled=True,
+            classifier_url="http://localhost:11435",
+            tiers=[
+                ModelTier(
+                    name="fast",
+                    model="claude-haiku-4.5",
+                    max_difficulty=2,
+                ),
+                ModelTier(name="premium", model="claude-opus-4.6"),
+            ],
+            default_tier="premium",
+        )
+        config = ProxyConfig(
+            upstream_base_url="https://api.example.com",
+            routing=routing,
+        )
+        mw = GuardMiddleware(config)
+
+        body = json.dumps(
+            {
+                "model": "claude-opus-4.6",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "Help me architect a system",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "bash",
+                                    "arguments": "{}",
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "role": "tool",
+                        "tool_call_id": "call_1",
+                        "content": "PASSED 1874 tests in 45.2s",
+                    },
+                    {"role": "user", "content": "looks good"},
+                ],
+            }
+        ).encode()
+
+        with patch.object(mw, "_classifier", create=True) as mock_classifier:
+            mock_classifier.classify = AsyncMock(return_value=1)
+            _, decision = await mw._apply_routing(body)
+
+        # classified_text is the LAST user message, not tool output
+        assert decision.classified_text == "looks good"
