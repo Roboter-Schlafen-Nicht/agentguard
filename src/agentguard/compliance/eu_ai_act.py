@@ -29,10 +29,11 @@ if TYPE_CHECKING:
 class EUAIActReportGenerator:
     """Generate EU AI Act compliance reports from audit logs.
 
-    Analyzes an AuditLog against four key articles of the EU AI Act
+    Analyzes an AuditLog against five key articles of the EU AI Act
     (Regulation 2024/1689) that are most relevant to autonomous AI
     agents:
 
+    - Art. 5/9: Persona safety and risk scoring
     - Art. 9: Risk management (are risks being detected and mitigated?)
     - Art. 12: Logging (are agent actions being recorded?)
     - Art. 13: Transparency (are agents identifiable?)
