@@ -20,11 +20,12 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.server.fastmcp import FastMCP
 
-from agentguard.audit.log import AuditLog
+from agentguard.audit.unified import Source, SourceAuditLog
 from agentguard.policies.builtins import load_all_builtins
 from agentguard.policies.guard import Guard
 
 if TYPE_CHECKING:
+    from agentguard.audit.log import AuditLog
     from agentguard.audit.retention import RetentionConfig
     from agentguard.audit.rotation import RotationConfig
 
@@ -83,7 +84,7 @@ def create_server(
         raise ValueError(msg)
     guard = Guard()
     session_id = f"ag-{uuid.uuid4().hex[:12]}"
-    audit_log = AuditLog(session_id)
+    audit_log: AuditLog = SourceAuditLog(session_id, source=Source.MCP_SERVER)
 
     # --- load policies ------------------------------------------------
     # Policy sources are additive: each enabled source appends its

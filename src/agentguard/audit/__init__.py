@@ -6,17 +6,37 @@ from agentguard.audit.models import AuditEntry
 from agentguard.audit.report import CrossSessionReport, generate_cross_session_report
 from agentguard.audit.retention import RetentionConfig, enforce_retention
 from agentguard.audit.rotation import RotationConfig
+from agentguard.audit.unified import (
+    SOURCE_METADATA_KEY,
+    ActionType,
+    FilterDirection,
+    Source,
+    SourceAuditLog,
+    classify_direction,
+    default_audit_dir,
+    inject_source_metadata,
+    query_directory,
+)
 
 __all__ = [
     "CSV_COLUMNS",
+    "SOURCE_METADATA_KEY",
+    "ActionType",
     "AuditEntry",
     "AuditLog",
     "CrossSessionReport",
+    "FilterDirection",
     "RetentionConfig",
     "RotationConfig",
+    "Source",
+    "SourceAuditLog",
+    "classify_direction",
+    "default_audit_dir",
     "enforce_retention",
     "export_csv",
     "export_json",
     "export_sqlite",
     "generate_cross_session_report",
+    "inject_source_metadata",
+    "query_directory",
 ]
