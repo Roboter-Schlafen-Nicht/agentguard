@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from datetime import date, time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
@@ -24,6 +24,11 @@ from agentguard.policies.models import (
     ScanTarget,
     Severity,
 )
+
+if TYPE_CHECKING:
+    from agentguard.policies.approval import ApprovalPolicy
+    from agentguard.policies.domain_allowlist import DomainAllowlist
+    from agentguard.policies.fs_allowlist import FilesystemAllowlist
 
 
 def load_policy_from_string(yaml_str: str) -> Policy:
@@ -103,7 +108,7 @@ def _parse_policy(data: dict[str, Any]) -> Policy:
     )
 
 
-def _parse_domain_allowlist(data: dict[str, Any]) -> Policy:
+def _parse_domain_allowlist(data: dict[str, Any]) -> DomainAllowlist:
     """Parse a domain_allowlist policy from a YAML dict.
 
     Expected fields:
@@ -131,7 +136,7 @@ def _parse_domain_allowlist(data: dict[str, Any]) -> Policy:
     )
 
 
-def _parse_fs_allowlist(data: dict[str, Any]) -> Policy:
+def _parse_fs_allowlist(data: dict[str, Any]) -> FilesystemAllowlist:
     """Parse a fs_allowlist policy from a YAML dict.
 
     Expected fields:
@@ -159,7 +164,7 @@ def _parse_fs_allowlist(data: dict[str, Any]) -> Policy:
     )
 
 
-def _parse_approval_policy(data: dict[str, Any]) -> Policy:
+def _parse_approval_policy(data: dict[str, Any]) -> ApprovalPolicy:
     """Parse an approval policy from a YAML dict.
 
     Expected fields:

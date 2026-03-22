@@ -49,7 +49,7 @@ class TestEUAIActReportGenerator:
         assert report.framework == "EU AI Act"
         assert report.session_id == "test-session"
 
-    def test_report_has_four_sections(self) -> None:
+    def test_report_has_five_sections(self) -> None:
         log = _make_log([{"action": "file_read", "result": "allowed"}])
         generator = EUAIActReportGenerator()
         report = generator.generate(log)
