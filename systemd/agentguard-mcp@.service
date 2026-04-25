@@ -1,0 +1,75 @@
+# AgentGuard MCP Server — systemd user service (SSE transport)
+#
+# Template unit. The instance name selects the protection preset:
+#
+#   systemctl --user start agentguard-mcp@permissive
+#   systemctl --user start agentguard-mcp@balanced
+#   systemctl --user start agentguard-mcp@strict
+#
+# Install:
+#   cp systemd/agentguard-mcp@.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agentguard-mcp@permissive
+#
+# Configuration:
+#   ~/.config/agentguard/mcp.env    (environment overrides)
+#
+# Logs:
+#   journalctl --user -u agentguard-mcp@permissive -f
+#
+# Connect from opencode.json:
+#   "mcp": {
+#     "agentguard": {
+#       "type": "remote",
+#       "url": "http://127.0.0.1:8021/sse"
+#     }
+#   }
+
+[Unit]
+Description=AgentGuard MCP Server (%i)
+Documentation=https://github.com/Roboter-Schlafen-Nicht/agentguard
+After=network-online.target
+Wants=network-online.target
+
+# Rate-limit restarts: max 5 in 60s
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+
+# Defaults — override in ~/.config/agentguard/mcp.env
+Environment=AGENTGUARD_MCP_PORT=8021
+Environment=AGENTGUARD_MCP_HOST=127.0.0.1
+Environment=AGENTGUARD_ACTOR=opencode-mcp
+Environment=AGENTGUARD_AUDIT_DIR=%h/.local/share/agentguard/audit
+Environment=AGENTGUARD_BIN=/home/human/miniconda3/bin/agentguard
+
+# Load user overrides (file is optional, - prefix means no error if missing)
+EnvironmentFile=-%h/.config/agentguard/mcp.env
+
+ExecStartPre=/bin/mkdir -p ${AGENTGUARD_AUDIT_DIR}
+ExecStart=/bin/bash -c '\
+  PRESET="%i"; \
+  ARGS="--transport sse \
+        --host ${AGENTGUARD_MCP_HOST} \
+        --port ${AGENTGUARD_MCP_PORT} \
+        --audit-dir ${AGENTGUARD_AUDIT_DIR} \
+        --actor ${AGENTGUARD_ACTOR} \
+        --auto-discover"; \
+  if [ "$PRESET" = "builtins" ]; then \
+    exec ${AGENTGUARD_BIN} serve --builtins $ARGS; \
+  else \
+    exec ${AGENTGUARD_BIN} serve --preset $PRESET $ARGS; \
+  fi'
+
+# Restart on crash (not on manual stop)
+Restart=on-failure
+RestartSec=3
+
+# Security hardening (user service — limited options)
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target

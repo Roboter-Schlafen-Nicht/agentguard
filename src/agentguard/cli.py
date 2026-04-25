@@ -564,6 +564,24 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Delete oldest rotated logs until total size is under this limit.",
     )
+    serve_parser.add_argument(
+        "--transport",
+        choices=["stdio", "sse", "streamable-http"],
+        default="stdio",
+        help="MCP transport protocol (default: stdio). Use 'sse' or "
+        "'streamable-http' for persistent HTTP server mode.",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to in sse/streamable-http mode (default: 127.0.0.1).",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8021,
+        help="Port to bind to in sse/streamable-http mode (default: 8021).",
+    )
 
     # --- report ---
     report_parser = subparsers.add_parser("report", help="Generate compliance reports.")
@@ -1640,7 +1658,11 @@ def _cmd_serve(args: argparse.Namespace) -> int:
             rotation=rotation,
             retention=retention,
         )
-        app.run()
+        transport = getattr(args, "transport", "stdio")
+        if transport in ("sse", "streamable-http"):
+            app.settings.host = args.host
+            app.settings.port = args.port
+        app.run(transport=transport)
     except ImportError:
         print(
             "Error: MCP dependencies not installed. "
