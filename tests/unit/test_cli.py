@@ -908,3 +908,82 @@ class TestServeCommand:
         assert exit_code == 0
         call_kwargs = mock_create.call_args[1]
         assert call_kwargs["actor"] == "custom-bot"
+
+    def test_serve_default_transport_is_stdio(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default transport is stdio (backward-compatible)."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli("serve", "--builtins")
+        assert exit_code == 0
+        mock_app.run.assert_called_once_with(transport="stdio")
+
+    def test_serve_sse_transport(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--transport sse starts SSE server on specified host/port."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli(
+            "serve",
+            "--builtins",
+            "--transport",
+            "sse",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9876",
+        )
+        assert exit_code == 0
+        mock_app.run.assert_called_once_with(transport="sse")
+
+    def test_serve_streamable_http_transport(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--transport streamable-http is accepted."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli(
+            "serve",
+            "--builtins",
+            "--transport",
+            "streamable-http",
+        )
+        assert exit_code == 0
+        mock_app.run.assert_called_once_with(transport="streamable-http")
+
+    def test_serve_sse_sets_host_port_on_app(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--host and --port are set on the FastMCP app settings."""
+        from unittest.mock import MagicMock
+
+        mock_app = MagicMock()
+        mock_app.settings = MagicMock()
+        mock_create = MagicMock(return_value=mock_app)
+        monkeypatch.setattr("agentguard.cli.create_server", mock_create)
+
+        exit_code, _, _ = _run_cli(
+            "serve",
+            "--builtins",
+            "--transport",
+            "sse",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9876",
+        )
+        assert exit_code == 0
+        assert mock_app.settings.host == "0.0.0.0"
+        assert mock_app.settings.port == 9876
